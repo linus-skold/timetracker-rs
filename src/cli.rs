@@ -3,6 +3,7 @@ use chrono::Local;
 use clap::{Parser, Subcommand};
 
 use crate::duration;
+use crate::icons;
 use crate::storage::{load_data, save_data};
 
 #[derive(Parser)]
@@ -44,7 +45,8 @@ pub fn start(description: Vec<String>) -> Result<()> {
 
     if let Some(active) = data.active_entry() {
         println!(
-            "⚠️  Already tracking: \"{}\" (started at {})",
+            "{}  Already tracking: \"{}\" (started at {})",
+            icons::WARNING,
             active.description,
             active.start_time.format("%H:%M")
         );
@@ -57,7 +59,8 @@ pub fn start(description: Vec<String>) -> Result<()> {
     save_data(&data)?;
 
     println!(
-        "▶️  Started: \"{}\" at {}",
+        "{}  Started: \"{}\" at {}",
+        icons::ACTIVE,
         desc,
         entry.start_time.format("%H:%M:%S")
     );
@@ -73,7 +76,7 @@ pub fn stop() -> Result<()> {
             let desc = entry.description.clone();
             let dur = entry.format_duration();
             save_data(&data)?;
-            println!("⏹️  Stopped: \"{}\" - Duration: {}", desc, dur);
+            println!("{}  Stopped: \"{}\" - Duration: {}", icons::STOPPED, desc, dur);
         }
         None => {
             println!("No active task to stop.");
@@ -92,7 +95,8 @@ pub fn log(description: String, time_str: String) -> Result<()> {
     save_data(&data)?;
 
     println!(
-        "📝 Logged: \"{}\" - Duration: {}",
+        "{} Logged: \"{}\" - Duration: {}",
+        icons::LOGGED,
         description,
         entry.format_duration()
     );
@@ -108,9 +112,9 @@ pub fn today() -> Result<()> {
         return Ok(());
     }
 
-    println!("📅 Today's entries:\n");
+    println!("{} Today's entries:\n", icons::CALENDAR);
     for entry in &today_entries {
-        let status = if entry.is_active() { "▶️ " } else { "  " };
+        let status = if entry.is_active() { icons::ACTIVE } else { "  " };
         println!(
             "{}{} - {} ({})",
             status,
@@ -131,9 +135,9 @@ pub fn list() -> Result<()> {
         return Ok(());
     }
 
-    println!("📋 All entries:\n");
+    println!("{} All entries:\n", icons::LIST);
     for entry in data.entries.iter().rev().take(20) {
-        let status = if entry.is_active() { "▶️ " } else { "  " };
+        let status = if entry.is_active() { icons::ACTIVE } else { "  " };
         println!(
             "{}{} {} - {} ({})",
             status,
@@ -150,7 +154,7 @@ pub fn status() -> Result<()> {
     let data = load_data()?;
 
     if let Some(active) = data.active_entry() {
-        println!("▶️  Currently tracking: \"{}\"", active.description);
+        println!("{}  Currently tracking: \"{}\"", icons::ACTIVE, active.description);
         println!("   Started at: {}", active.start_time.format("%H:%M:%S"));
         println!("   Duration: {}", active.format_duration());
     } else {

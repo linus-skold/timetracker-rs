@@ -13,6 +13,7 @@ use ratatui::{
 };
 
 use crate::duration;
+use crate::icons;
 use crate::storage::{load_data, save_data};
 use crate::time::TimeData;
 
@@ -153,7 +154,7 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     // Header with status
     let status_text = match app.data.active_entry() {
-        Some(entry) => format!("▶️  {} - {} ", entry.description, entry.format_duration()),
+        Some(entry) => format!("{}  {} - {} ", icons::ACTIVE, entry.description, entry.format_duration()),
         None => "No active task".to_string(),
     };
     let header =
@@ -172,7 +173,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         .iter()
         .rev()
         .map(|entry| {
-            let status = if entry.is_active() { "▶️" } else { "" };
+            let status = if entry.is_active() { icons::ACTIVE } else { "" };
             Row::new(vec![
                 Cell::from(entry.start_time.format("%Y-%m-%d").to_string()),
                 Cell::from(entry.start_time.format("%H:%M").to_string()),

@@ -2,6 +2,7 @@ use anyhow::Result;
 
 mod cli;
 mod duration;
+mod icons;
 mod storage;
 mod time;
 mod tui;
