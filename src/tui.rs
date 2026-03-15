@@ -17,6 +17,23 @@ use crate::icons;
 use crate::storage::{load_data, save_data};
 use crate::tracker::TimeData;
 
+// Color theme
+mod theme {
+    use ratatui::style::Color;
+
+    pub const ACCENT: Color = Color::Rgb(138, 180, 248);       // Light blue
+    pub const ACTIVE: Color = Color::Rgb(129, 199, 132);       // Green
+    pub const INACTIVE: Color = Color::Rgb(144, 144, 144);     // Gray
+    pub const HEADER_BG: Color = Color::Rgb(48, 48, 48);       // Dark gray
+    pub const SELECTED_BG: Color = Color::Rgb(66, 66, 66);     // Medium gray
+    pub const HIGHLIGHT: Color = Color::Rgb(255, 213, 79);     // Yellow/gold
+    pub const DURATION_HIGH: Color = Color::Rgb(239, 154, 154); // Light red
+    pub const DURATION_MED: Color = Color::Rgb(255, 224, 130);  // Light yellow
+    pub const DURATION_LOW: Color = Color::Rgb(165, 214, 167);  // Light green
+    pub const BORDER: Color = Color::Rgb(88, 88, 88);          // Border gray
+    pub const TITLE: Color = Color::Rgb(186, 186, 186);        // Light gray
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum ViewMode {
     All,
@@ -236,17 +253,29 @@ fn ui(f: &mut Frame, app: &mut App) {
         .split(f.area());
 
     // Header with status
-    let status_text = match app.data.active_entry() {
-        Some(entry) => format!(
-            "{}  {} - {} ",
-            icons::ACTIVE,
-            entry.description,
-            entry.format_duration()
+    let (status_text, status_style) = match app.data.active_entry() {
+        Some(entry) => (
+            format!(
+                "{}  {} - {} ",
+                icons::ACTIVE,
+                entry.description,
+                entry.format_duration()
+            ),
+            Style::default().fg(theme::ACTIVE).bold(),
         ),
-        None => "No active task".to_string(),
+        None => (
+            "No active task".to_string(),
+            Style::default().fg(theme::INACTIVE).italic(),
+        ),
     };
-    let header =
-        Paragraph::new(status_text).block(Block::default().borders(Borders::ALL).title(" Status "));
+    let header = Paragraph::new(status_text)
+        .style(status_style)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme::BORDER))
+                .title(Span::styled(" Status ", Style::default().fg(theme::TITLE))),
+        );
     f.render_widget(header, chunks[0]);
 
     // Tabs for view mode with date info
@@ -273,11 +302,16 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     let tabs = Tabs::new(tab_titles)
         .select(selected_tab)
-        .highlight_style(Style::default().fg(Color::Yellow).bold())
+        .style(Style::default().fg(theme::INACTIVE))
+        .highlight_style(Style::default().fg(theme::ACCENT).bold())
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(format!(" {} | {} ", app.view_mode.title(), date_info)),
+                .border_style(Style::default().fg(theme::BORDER))
+                .title(Span::styled(
+                    format!(" {} | {} ", app.view_mode.title(), date_info),
+                    Style::default().fg(theme::HIGHLIGHT),
+                )),
         );
     f.render_widget(tabs, chunks[1]);
 
@@ -307,11 +341,31 @@ fn ui(f: &mut Frame, app: &mut App) {
         }
     };
 
-    let footer_text = format!(
-        " Total: {} | h/l: prev/next | t: today | 1-3: views | j/k: nav | d: del | s: stop | q: quit ",
-        duration::format(total)
+    let total_str = duration::format(total);
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled(" Total: ", Style::default().fg(theme::TITLE)),
+        Span::styled(total_str, Style::default().fg(theme::HIGHLIGHT).bold()),
+        Span::styled(" | ", Style::default().fg(theme::BORDER)),
+        Span::styled("h/l", Style::default().fg(theme::ACCENT)),
+        Span::styled(": prev/next | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("t", Style::default().fg(theme::ACCENT)),
+        Span::styled(": today | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("1-3", Style::default().fg(theme::ACCENT)),
+        Span::styled(": views | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("j/k", Style::default().fg(theme::ACCENT)),
+        Span::styled(": nav | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("d", Style::default().fg(theme::ACCENT)),
+        Span::styled(": del | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("s", Style::default().fg(theme::ACCENT)),
+        Span::styled(": stop | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("q", Style::default().fg(theme::ACCENT)),
+        Span::styled(": quit ", Style::default().fg(theme::INACTIVE)),
+    ]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER)),
     );
-    let footer = Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[3]);
 }
 
@@ -326,17 +380,34 @@ fn render_weekly_breakdown(f: &mut Frame, app: &App, area: Rect) {
             let date_str = date.format("%m/%d").to_string();
             let dur_str = duration::format(*dur);
             let is_today = *date == Local::now().date_naive();
-            let style = if is_today {
-                Style::default().fg(Color::Yellow)
+            let hours = dur.num_hours();
+
+            // Color code duration
+            let dur_color = if hours >= 8 {
+                theme::DURATION_HIGH
+            } else if hours >= 4 {
+                theme::DURATION_MED
             } else {
-                Style::default()
+                theme::DURATION_LOW
             };
+
+            let (day_style, date_style) = if is_today {
+                (
+                    Style::default().fg(theme::HIGHLIGHT).bold(),
+                    Style::default().fg(theme::HIGHLIGHT),
+                )
+            } else {
+                (
+                    Style::default().fg(theme::ACCENT),
+                    Style::default().fg(theme::TITLE),
+                )
+            };
+
             Row::new(vec![
-                Cell::from(day_name),
-                Cell::from(date_str),
-                Cell::from(dur_str),
+                Cell::from(day_name).style(day_style),
+                Cell::from(date_str).style(date_style),
+                Cell::from(dur_str).style(Style::default().fg(dur_color)),
             ])
-            .style(style)
         })
         .collect();
 
@@ -351,7 +422,11 @@ fn render_weekly_breakdown(f: &mut Frame, app: &App, area: Rect) {
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .title(" Daily Totals "),
+            .border_style(Style::default().fg(theme::BORDER))
+            .title(Span::styled(
+                " Daily Totals ",
+                Style::default().fg(theme::TITLE),
+            )),
     );
 
     f.render_widget(table, area);
@@ -360,20 +435,53 @@ fn render_weekly_breakdown(f: &mut Frame, app: &App, area: Rect) {
 fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
     let header_cells = ["Date", "Time", "Description", "Duration", ""]
         .into_iter()
-        .map(|h| Cell::from(h).style(Style::default().fg(Color::Yellow)));
-    let header_row = Row::new(header_cells).height(1);
+        .map(|h| {
+            Cell::from(h).style(
+                Style::default()
+                    .fg(theme::ACCENT)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
+    let header_row = Row::new(header_cells)
+        .height(1)
+        .style(Style::default().bg(theme::HEADER_BG));
 
     let entries = app.filtered_entries();
     let rows: Vec<Row> = entries
         .iter()
-        .map(|entry| {
+        .enumerate()
+        .map(|(i, entry)| {
+            let hours = entry.duration().num_hours();
+            let dur_color = if hours >= 4 {
+                theme::DURATION_HIGH
+            } else if hours >= 2 {
+                theme::DURATION_MED
+            } else {
+                theme::DURATION_LOW
+            };
+
+            let status_style = if entry.is_active() {
+                Style::default().fg(theme::ACTIVE)
+            } else {
+                Style::default().fg(theme::INACTIVE)
+            };
+
+            let row_style = if i % 2 == 0 {
+                Style::default()
+            } else {
+                Style::default().bg(Color::Rgb(35, 35, 35))
+            };
+
             Row::new(vec![
-                Cell::from(entry.start_time.format("%Y-%m-%d").to_string()),
-                Cell::from(entry.start_time.format("%H:%M").to_string()),
+                Cell::from(entry.start_time.format("%Y-%m-%d").to_string())
+                    .style(Style::default().fg(theme::TITLE)),
+                Cell::from(entry.start_time.format("%H:%M").to_string())
+                    .style(Style::default().fg(theme::ACCENT)),
                 Cell::from(entry.description.clone()),
-                Cell::from(entry.format_duration()),
-                Cell::from(entry.status_icon()),
+                Cell::from(entry.format_duration()).style(Style::default().fg(dur_color)),
+                Cell::from(entry.status_icon()).style(status_style),
             ])
+            .style(row_style)
         })
         .collect();
 
@@ -388,8 +496,13 @@ fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
         ],
     )
     .header(header_row)
-    .block(Block::default().borders(Borders::ALL).title(" Entries "))
-    .row_highlight_style(Style::default().bg(Color::DarkGray))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
+            .title(Span::styled(" Entries ", Style::default().fg(theme::TITLE))),
+    )
+    .row_highlight_style(Style::default().bg(theme::SELECTED_BG))
     .highlight_symbol(">> ");
 
     f.render_stateful_widget(table, area, &mut app.table_state);
