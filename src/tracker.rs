@@ -1,4 +1,4 @@
-use chrono::{DateTime, Duration, Local};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 
 use crate::duration;
@@ -90,5 +90,55 @@ impl TimeData {
         self.next_id += 1;
         self.entries.push(entry);
         self.entries.last().unwrap()
+    }
+
+    /// Get entries for a specific date
+    pub fn entries_for_date(&self, date: NaiveDate) -> Vec<&TimeEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.start_time.date_naive() == date)
+            .collect()
+    }
+
+    /// Get total duration for a specific date
+    pub fn total_for_date(&self, date: NaiveDate) -> Duration {
+        self.entries_for_date(date)
+            .iter()
+            .fold(Duration::zero(), |acc, e| acc + e.duration())
+    }
+
+    /// Get the start of the week (Monday) for a given date
+    pub fn week_start(date: NaiveDate) -> NaiveDate {
+        let days_from_monday = date.weekday().num_days_from_monday();
+        date - Duration::days(days_from_monday as i64)
+    }
+
+    /// Get entries for a specific week (starting Monday)
+    pub fn entries_for_week(&self, week_start: NaiveDate) -> Vec<&TimeEntry> {
+        let week_end = week_start + Duration::days(7);
+        self.entries
+            .iter()
+            .filter(|e| {
+                let date = e.start_time.date_naive();
+                date >= week_start && date < week_end
+            })
+            .collect()
+    }
+
+    /// Get total duration for a specific week
+    pub fn total_for_week(&self, week_start: NaiveDate) -> Duration {
+        self.entries_for_week(week_start)
+            .iter()
+            .fold(Duration::zero(), |acc, e| acc + e.duration())
+    }
+
+    /// Get daily breakdown for a week (returns Vec of (date, total_duration))
+    pub fn daily_breakdown(&self, week_start: NaiveDate) -> Vec<(NaiveDate, Duration)> {
+        (0..7)
+            .map(|i| {
+                let date = week_start + Duration::days(i);
+                (date, self.total_for_date(date))
+            })
+            .collect()
     }
 }
