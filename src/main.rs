@@ -21,5 +21,6 @@ fn main() -> Result<()> {
         Commands::List => cli::list(),
         Commands::Tui => tui::run_tui(),
         Commands::Status => cli::status(),
+        Commands::Active => cli::active(),
     }
 }

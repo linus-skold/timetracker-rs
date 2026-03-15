@@ -163,3 +163,7 @@ pub fn status() -> Result<()> {
     }
     Ok(())
 }
+
+pub fn active() -> Result<bool> {
+    Ok(data.active_entry().is_some())
+}
