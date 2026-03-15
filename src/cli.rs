@@ -166,6 +166,6 @@ pub fn status() -> Result<()> {
     Ok(())
 }
 
-pub fn active() -> Result<bool> {
+pub fn active() -> Result<()> {
     Ok(data.active_entry().is_some())
 }
