@@ -12,8 +12,9 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 
+use crate::duration;
 use crate::storage::{load_data, save_data};
-use crate::time::{format_duration, TimeData};
+use crate::time::TimeData;
 
 
 struct App {
@@ -202,7 +203,7 @@ fn ui(f: &mut Frame, app: &mut App) {
     // Footer with help and today's total
     let footer_text = format!(
         " Today: {} | j/k: navigate | d: delete | s: stop | r: reload | q: quit ",
-        format_duration(app.data.today_total())
+        duration::format(app.data.today_total())
     );
     let footer = Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[2]);

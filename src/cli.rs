@@ -2,8 +2,8 @@ use anyhow::Result;
 use chrono::Local;
 use clap::{Parser, Subcommand};
 
+use crate::duration;
 use crate::storage::{load_data, save_data};
-use crate::time::{self, format_duration};
 
 #[derive(Parser)]
 #[command(name = "tt", about = "Simple time tracking CLI")]
@@ -84,7 +84,7 @@ pub fn stop() -> Result<()> {
 
 pub fn log(description: String, time_str: String) -> Result<()> {
     let mut data = load_data()?;
-    let duration = time::parse_duration(&time_str);
+    let duration = duration::parse(&time_str);
     let end_time = Local::now();
     let start_time = end_time - duration;
 
@@ -119,7 +119,7 @@ pub fn today() -> Result<()> {
             entry.format_duration()
         );
     }
-    println!("\nTotal: {}", format_duration(data.today_total()));
+    println!("\nTotal: {}", duration::format(data.today_total()));
     Ok(())
 }
 

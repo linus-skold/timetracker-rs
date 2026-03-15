@@ -1,6 +1,7 @@
 use anyhow::Result;
 
 mod cli;
+mod duration;
 mod storage;
 mod time;
 mod tui;
