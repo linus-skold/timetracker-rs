@@ -1,7 +1,6 @@
 use chrono::{DateTime, Duration, Local};
 use serde::{Deserialize, Serialize};
 
-
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TimeEntry {
     pub id: u64,
@@ -17,10 +16,7 @@ impl TimeEntry {
     }
 
     pub fn format_duration(&self) -> String {
-        let dur = self.duration();
-        let hours = dur.num_hours();
-        let minutes = dur.num_minutes() % 60;
-        format!("{}h {}m", hours, minutes)
+        format_duration(self.duration())
     }
 
     pub fn is_active(&self) -> bool {
@@ -32,4 +28,81 @@ impl TimeEntry {
 pub struct TimeData {
     pub entries: Vec<TimeEntry>,
     pub next_id: u64,
+}
+
+impl TimeData {
+    pub fn active_entry(&self) -> Option<&TimeEntry> {
+        self.entries.iter().find(|e| e.is_active())
+    }
+
+    pub fn active_entry_mut(&mut self) -> Option<&mut TimeEntry> {
+        self.entries.iter_mut().find(|e| e.is_active())
+    }
+
+    pub fn today_entries(&self) -> Vec<&TimeEntry> {
+        let today = Local::now().date_naive();
+        self.entries
+            .iter()
+            .filter(|e| e.start_time.date_naive() == today)
+            .collect()
+    }
+
+    pub fn today_total(&self) -> Duration {
+        self.today_entries()
+            .iter()
+            .fold(Duration::zero(), |acc, e| acc + e.duration())
+    }
+
+    pub fn add_entry(
+        &mut self,
+        description: String,
+        start_time: DateTime<Local>,
+        end_time: Option<DateTime<Local>>,
+    ) -> TimeEntry {
+        let entry = TimeEntry {
+            id: self.next_id,
+            description,
+            start_time,
+            end_time,
+        };
+        self.next_id += 1;
+        self.entries.push(entry.clone());
+        entry
+    }
+}
+
+/// Format a duration as "Xh Ym"
+pub fn format_duration(dur: Duration) -> String {
+    let hours = dur.num_hours();
+    let minutes = dur.num_minutes() % 60;
+    format!("{}h {}m", hours, minutes)
+}
+
+/// Parse a duration string like "1h30m", "45m", "2h", or bare minutes "45"
+pub fn parse_duration(time_str: &str) -> Duration {
+    let mut hours = 0i64;
+    let mut minutes = 0i64;
+    let mut current_num = String::new();
+
+    for c in time_str.chars() {
+        match c {
+            '0'..='9' => current_num.push(c),
+            'h' | 'H' => {
+                hours = current_num.parse().unwrap_or(0);
+                current_num.clear();
+            }
+            'm' | 'M' => {
+                minutes = current_num.parse().unwrap_or(0);
+                current_num.clear();
+            }
+            _ => {}
+        }
+    }
+
+    // Handle bare number as minutes
+    if !current_num.is_empty() && hours == 0 && minutes == 0 {
+        minutes = current_num.parse().unwrap_or(0);
+    }
+
+    Duration::hours(hours) + Duration::minutes(minutes)
 }

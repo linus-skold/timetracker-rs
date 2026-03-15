@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{Duration, Local};
+use chrono::Local;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -13,7 +13,7 @@ use ratatui::{
 };
 
 use crate::storage::{load_data, save_data};
-use crate::time::{TimeData};
+use crate::time::{format_duration, TimeData};
 
 
 struct App {
@@ -80,22 +80,11 @@ impl App {
     }
 
     fn stop_active(&mut self) -> Result<()> {
-        for entry in &mut self.data.entries {
-            if entry.is_active() {
-                entry.end_time = Some(Local::now());
-            }
+        if let Some(entry) = self.data.active_entry_mut() {
+            entry.end_time = Some(Local::now());
         }
         save_data(&self.data)?;
         Ok(())
-    }
-
-    fn today_total(&self) -> Duration {
-        let today = Local::now().date_naive();
-        self.data
-            .entries
-            .iter()
-            .filter(|e| e.start_time.date_naive() == today)
-            .fold(Duration::zero(), |acc, e| acc + e.duration())
     }
 }
 
@@ -162,8 +151,7 @@ fn ui(f: &mut Frame, app: &mut App) {
         .split(f.area());
 
     // Header with status
-    let active_task = app.data.entries.iter().find(|e| e.is_active());
-    let status_text = match active_task {
+    let status_text = match app.data.active_entry() {
         Some(entry) => format!("▶️  {} - {} ", entry.description, entry.format_duration()),
         None => "No active task".to_string(),
     };
@@ -212,11 +200,9 @@ fn ui(f: &mut Frame, app: &mut App) {
     f.render_stateful_widget(table, chunks[1], &mut app.table_state);
 
     // Footer with help and today's total
-    let today_total = app.today_total();
     let footer_text = format!(
-        " Today: {}h {}m | j/k: navigate | d: delete | s: stop | r: reload | q: quit ",
-        today_total.num_hours(),
-        today_total.num_minutes() % 60
+        " Today: {} | j/k: navigate | d: delete | s: stop | r: reload | q: quit ",
+        format_duration(app.data.today_total())
     );
     let footer = Paragraph::new(footer_text).block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[2]);
