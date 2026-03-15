@@ -167,5 +167,13 @@ pub fn status() -> Result<()> {
 }
 
 pub fn active() -> Result<()> {
-    Ok(data.active_entry().is_some())
+    let data = load_data()?;
+
+    if data.active_entry().is_some() {
+        println!("true");
+    } else {
+        println!("false");
+    }
+
+    Ok(())
 }
