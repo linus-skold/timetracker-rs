@@ -14,7 +14,7 @@ use ratatui::{
 use crate::duration;
 use crate::icons;
 use crate::storage::{load_data, save_data};
-use crate::time::TimeData;
+use crate::tracker::TimeData;
 
 
 struct App {

@@ -4,7 +4,7 @@ mod cli;
 mod duration;
 mod icons;
 mod storage;
-mod time;
+mod tracker;
 mod tui;
 
 use cli::{Cli, Commands};
