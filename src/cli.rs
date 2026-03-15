@@ -55,14 +55,15 @@ pub fn start(description: Vec<String>) -> Result<()> {
     }
 
     let desc = description.join(" ");
-    let entry = data.add_entry(desc.clone(), Local::now(), None);
+    let start_time = Local::now();
+    data.add_entry(desc.clone(), start_time, None);
     save_data(&data)?;
 
     println!(
         "{}  Started: \"{}\" at {}",
         icons::ACTIVE,
         desc,
-        entry.start_time.format("%H:%M:%S")
+        start_time.format("%H:%M:%S")
     );
     Ok(())
 }
@@ -87,18 +88,18 @@ pub fn stop() -> Result<()> {
 
 pub fn log(description: String, time_str: String) -> Result<()> {
     let mut data = load_data()?;
-    let duration = duration::parse(&time_str);
+    let dur = duration::parse(&time_str);
     let end_time = Local::now();
-    let start_time = end_time - duration;
+    let start_time = end_time - dur;
 
-    let entry = data.add_entry(description.clone(), start_time, Some(end_time));
+    data.add_entry(description.clone(), start_time, Some(end_time));
     save_data(&data)?;
 
     println!(
         "{} Logged: \"{}\" - Duration: {}",
         icons::LOGGED,
         description,
-        entry.format_duration()
+        duration::format(dur)
     );
     Ok(())
 }

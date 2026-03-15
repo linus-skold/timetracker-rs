@@ -80,7 +80,7 @@ impl TimeData {
         description: String,
         start_time: DateTime<Local>,
         end_time: Option<DateTime<Local>>,
-    ) -> TimeEntry {
+    ) -> &TimeEntry {
         let entry = TimeEntry {
             id: self.next_id,
             description,
@@ -88,7 +88,7 @@ impl TimeData {
             end_time,
         };
         self.next_id += 1;
-        self.entries.push(entry.clone());
-        entry
+        self.entries.push(entry);
+        self.entries.last().unwrap()
     }
 }

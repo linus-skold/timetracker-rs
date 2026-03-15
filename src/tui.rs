@@ -16,7 +16,6 @@ use crate::icons;
 use crate::storage::{load_data, save_data};
 use crate::tracker::TimeData;
 
-
 struct App {
     data: TimeData,
     table_state: TableState,
@@ -151,7 +150,12 @@ fn ui(f: &mut Frame, app: &mut App) {
 
     // Header with status
     let status_text = match app.data.active_entry() {
-        Some(entry) => format!("{}  {} - {} ", icons::ACTIVE, entry.description, entry.format_duration()),
+        Some(entry) => format!(
+            "{}  {} - {} ",
+            icons::ACTIVE,
+            entry.description,
+            entry.format_duration()
+        ),
         None => "No active task".to_string(),
     };
     let header =
