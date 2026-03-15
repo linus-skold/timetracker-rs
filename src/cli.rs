@@ -70,17 +70,17 @@ pub fn start(description: Vec<String>) -> Result<()> {
 pub fn stop() -> Result<()> {
     let mut data = load_data()?;
 
-    match data.active_entry_mut() {
-        Some(entry) => {
-            entry.end_time = Some(Local::now());
-            let desc = entry.description.clone();
-            let dur = entry.format_duration();
-            save_data(&data)?;
-            println!("{}  Stopped: \"{}\" - Duration: {}", icons::STOPPED, desc, dur);
-        }
-        None => {
-            println!("No active task to stop.");
-        }
+    // Get info before stopping
+    let info = data.active_entry().map(|e| {
+        (e.description.clone(), e.format_duration())
+    });
+
+    if data.stop_active() {
+        let (desc, dur) = info.unwrap();
+        save_data(&data)?;
+        println!("{}  Stopped: \"{}\" - Duration: {}", icons::STOPPED, desc, dur);
+    } else {
+        println!("No active task to stop.");
     }
     Ok(())
 }

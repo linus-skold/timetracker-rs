@@ -1,5 +1,4 @@
 use anyhow::Result;
-use chrono::Local;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -82,9 +81,7 @@ impl App {
     }
 
     fn stop_active(&mut self) -> Result<()> {
-        if let Some(entry) = self.data.active_entry_mut() {
-            entry.end_time = Some(Local::now());
-        }
+        self.data.stop_active();
         save_data(&self.data)?;
         Ok(())
     }

@@ -41,6 +41,16 @@ impl TimeData {
         self.entries.iter_mut().find(|e| e.is_active())
     }
 
+    /// Stop the currently active entry. Returns true if an entry was stopped.
+    pub fn stop_active(&mut self) -> bool {
+        if let Some(entry) = self.active_entry_mut() {
+            entry.end_time = Some(Local::now());
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn today_entries(&self) -> Vec<&TimeEntry> {
         let today = Local::now().date_naive();
         self.entries
