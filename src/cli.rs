@@ -114,7 +114,7 @@ pub fn today() -> Result<()> {
 
     println!("{} Today's entries:\n", icons::CALENDAR);
     for entry in &today_entries {
-        let status = if entry.is_active() { icons::ACTIVE } else { "  " };
+        let status = if entry.is_active() { entry.status_icon() } else { "  " };
         println!(
             "{}{} - {} ({})",
             status,
@@ -137,7 +137,7 @@ pub fn list() -> Result<()> {
 
     println!("{} All entries:\n", icons::LIST);
     for entry in data.entries.iter().rev().take(20) {
-        let status = if entry.is_active() { icons::ACTIVE } else { "  " };
+        let status = if entry.is_active() { entry.status_icon() } else { "  " };
         println!(
             "{}{} {} - {} ({})",
             status,

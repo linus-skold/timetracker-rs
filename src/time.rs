@@ -2,6 +2,7 @@ use chrono::{DateTime, Duration, Local};
 use serde::{Deserialize, Serialize};
 
 use crate::duration;
+use crate::icons;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TimeEntry {
@@ -23,6 +24,15 @@ impl TimeEntry {
 
     pub fn is_active(&self) -> bool {
         self.end_time.is_none()
+    }
+
+    /// Returns the status icon for this entry (active or empty)
+    pub fn status_icon(&self) -> &'static str {
+        if self.is_active() {
+            icons::ACTIVE
+        } else {
+            ""
+        }
     }
 }
 

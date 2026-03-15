@@ -170,13 +170,12 @@ fn ui(f: &mut Frame, app: &mut App) {
         .iter()
         .rev()
         .map(|entry| {
-            let status = if entry.is_active() { icons::ACTIVE } else { "" };
             Row::new(vec![
                 Cell::from(entry.start_time.format("%Y-%m-%d").to_string()),
                 Cell::from(entry.start_time.format("%H:%M").to_string()),
                 Cell::from(entry.description.clone()),
                 Cell::from(entry.format_duration()),
-                Cell::from(status),
+                Cell::from(entry.status_icon()),
             ])
         })
         .collect();
