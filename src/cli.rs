@@ -38,6 +38,8 @@ pub enum Commands {
     Tui,
     /// Show current status
     Status,
+    /// true/false if something is active
+    Active,
 }
 
 pub fn start(description: Vec<String>) -> Result<()> {
