@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 use crate::duration;
 use crate::icons;
 use crate::storage::{load_data, save_data};
+use crate::tracker::parse_tags;
 
 #[derive(Parser)]
 #[command(name = "tt", about = "Simple time tracking CLI")]
@@ -56,15 +57,23 @@ pub fn start(description: Vec<String>) -> Result<()> {
         return Ok(());
     }
 
-    let desc = description.join(" ");
+    let raw_desc = description.join(" ");
+    let (desc, tags) = parse_tags(&raw_desc);
     let start_time = Local::now();
-    data.add_entry(desc.clone(), start_time, None);
+    data.add_entry(desc.clone(), tags.clone(), start_time, None);
     save_data(&data)?;
 
+    let tags_display = if tags.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" "))
+    };
+
     println!(
-        "{}  Started: \"{}\" at {}",
+        "{}  Started: \"{}\"{} at {}",
         icons::ACTIVE,
         desc,
+        tags_display,
         start_time.format("%H:%M:%S")
     );
     Ok(())
@@ -94,13 +103,21 @@ pub fn log(description: String, time_str: String) -> Result<()> {
     let end_time = Local::now();
     let start_time = end_time - dur;
 
-    data.add_entry(description.clone(), start_time, Some(end_time));
+    let (desc, tags) = parse_tags(&description);
+    data.add_entry(desc.clone(), tags.clone(), start_time, Some(end_time));
     save_data(&data)?;
 
+    let tags_display = if tags.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" "))
+    };
+
     println!(
-        "{} Logged: \"{}\" - Duration: {}",
+        "{} Logged: \"{}\"{} - Duration: {}",
         icons::LOGGED,
-        description,
+        desc,
+        tags_display,
         duration::format(dur)
     );
     Ok(())
@@ -118,11 +135,17 @@ pub fn today() -> Result<()> {
     println!("{} Today's entries:\n", icons::CALENDAR);
     for entry in &today_entries {
         let status = if entry.is_active() { entry.status_icon() } else { "  " };
+        let tags_display = if entry.tags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", entry.format_tags())
+        };
         println!(
-            "{}{} - {} ({})",
+            "{}{} - {}{} ({})",
             status,
             entry.start_time.format("%H:%M"),
             entry.description,
+            tags_display,
             entry.format_duration()
         );
     }
@@ -141,12 +164,18 @@ pub fn list() -> Result<()> {
     println!("{} All entries:\n", icons::LIST);
     for entry in data.entries.iter().rev().take(20) {
         let status = if entry.is_active() { entry.status_icon() } else { "  " };
+        let tags_display = if entry.tags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", entry.format_tags())
+        };
         println!(
-            "{}{} {} - {} ({})",
+            "{}{} {} - {}{} ({})",
             status,
             entry.start_time.format("%Y-%m-%d"),
             entry.start_time.format("%H:%M"),
             entry.description,
+            tags_display,
             entry.format_duration()
         );
     }
@@ -158,6 +187,9 @@ pub fn status() -> Result<()> {
 
     if let Some(active) = data.active_entry() {
         println!("{}  Currently tracking: \"{}\"", icons::ACTIVE, active.description);
+        if !active.tags.is_empty() {
+            println!("   Tags: {}", active.format_tags());
+        }
         println!("   Started at: {}", active.start_time.format("%H:%M:%S"));
         println!("   Duration: {}", active.format_duration());
     } else {

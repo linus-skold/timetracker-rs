@@ -62,6 +62,7 @@ enum InputMode {
 #[derive(Clone, Copy, PartialEq)]
 enum InputField {
     Description,
+    Tags,
     Duration,
     Timestamp,
 }
@@ -76,10 +77,13 @@ struct App {
     input_mode: InputMode,
     input_field: InputField,
     input_description: String,
+    input_tags: String, // Space-separated tags (without #)
     input_duration: String,
     input_timestamp: String, // Optional: end time like "14:30" or "2024-03-16 14:30"
     // Search state
     search_term: String,
+    // Tag filter state
+    tag_filter: Vec<String>,
     // Edit state
     editing_entry_id: Option<u64>,
 }
@@ -95,9 +99,11 @@ impl App {
             input_mode: InputMode::Normal,
             input_field: InputField::Description,
             input_description: String::new(),
+            input_tags: String::new(),
             input_duration: String::new(),
             input_timestamp: String::new(),
             search_term: String::new(),
+            tag_filter: Vec::new(),
             editing_entry_id: None,
         })
     }
@@ -123,6 +129,16 @@ impl App {
             }
         };
 
+        // Apply tag filter first
+        let entries = if self.tag_filter.is_empty() {
+            entries
+        } else {
+            entries
+                .into_iter()
+                .filter(|e| e.has_any_tag(&self.tag_filter))
+                .collect()
+        };
+
         // Apply search filter if search term is not empty
         if self.search_term.is_empty() {
             entries
@@ -130,7 +146,10 @@ impl App {
             let search_lower = self.search_term.to_lowercase();
             entries
                 .into_iter()
-                .filter(|e| e.description.to_lowercase().contains(&search_lower))
+                .filter(|e| {
+                    e.description.to_lowercase().contains(&search_lower)
+                        || e.tags.iter().any(|t| t.to_lowercase().contains(&search_lower))
+                })
                 .collect()
         }
     }
@@ -143,6 +162,48 @@ impl App {
 
     fn is_searching(&self) -> bool {
         !self.search_term.is_empty() || self.input_mode == InputMode::Searching
+    }
+
+    fn is_tag_filtering(&self) -> bool {
+        !self.tag_filter.is_empty()
+    }
+
+    fn toggle_tag_filter(&mut self, tag: &str) {
+        let tag = tag.to_string();
+        if let Some(pos) = self.tag_filter.iter().position(|t| t == &tag) {
+            self.tag_filter.remove(pos);
+        } else {
+            self.tag_filter.push(tag);
+        }
+        self.table_state.select(Some(0));
+    }
+
+    fn clear_tag_filter(&mut self) {
+        self.tag_filter.clear();
+        self.table_state.select(Some(0));
+    }
+
+    fn filter_by_selected_tags(&mut self) {
+        // Get tags from selected entry
+        let tags = {
+            let filtered = self.filtered_entries();
+            self.table_state.selected().and_then(|idx| {
+                filtered.get(idx).map(|entry| entry.tags.clone())
+            })
+        };
+
+        if let Some(tags) = tags {
+            if tags.is_empty() {
+                return;
+            }
+            // If already filtering by these exact tags, clear the filter
+            if self.tag_filter == tags {
+                self.clear_tag_filter();
+            } else {
+                self.tag_filter = tags;
+                self.table_state.select(Some(0));
+            }
+        }
     }
 
     fn start_search(&mut self) {
@@ -261,6 +322,7 @@ impl App {
         self.input_mode = InputMode::AddingEntry;
         self.input_field = InputField::Description;
         self.input_description.clear();
+        self.input_tags.clear();
         self.input_duration.clear();
         self.input_timestamp.clear();
     }
@@ -268,6 +330,7 @@ impl App {
     fn cancel_adding(&mut self) {
         self.input_mode = InputMode::Normal;
         self.input_description.clear();
+        self.input_tags.clear();
         self.input_duration.clear();
         self.input_timestamp.clear();
         self.editing_entry_id = None;
@@ -282,6 +345,7 @@ impl App {
                     (
                         entry.id,
                         entry.description.clone(),
+                        entry.tags.join(" "),
                         entry.format_duration(),
                         entry.end_time.map(|t| t.format("%Y-%m-%d %H:%M").to_string()),
                     )
@@ -289,9 +353,10 @@ impl App {
             })
         };
 
-        if let Some((id, description, duration, end_time)) = entry_data {
+        if let Some((id, description, tags, duration, end_time)) = entry_data {
             self.editing_entry_id = Some(id);
             self.input_description = description;
+            self.input_tags = tags;
             self.input_duration = duration;
             self.input_timestamp = end_time.unwrap_or_default();
             self.input_mode = InputMode::EditingEntry;
@@ -322,7 +387,13 @@ impl App {
         };
         let start_time = end_time.unwrap() - dur;
 
-        self.data.update_entry(entry_id, self.input_description.clone(), start_time, end_time);
+        let tags: Vec<String> = self.input_tags
+            .split_whitespace()
+            .map(|s| s.trim_start_matches('#').to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        self.data.update_entry(entry_id, self.input_description.clone(), tags, start_time, end_time);
         save_data(&self.data)?;
 
         self.cancel_adding(); // Reuse to clear fields
@@ -331,7 +402,8 @@ impl App {
 
     fn next_input_field(&mut self) {
         self.input_field = match self.input_field {
-            InputField::Description => InputField::Duration,
+            InputField::Description => InputField::Tags,
+            InputField::Tags => InputField::Duration,
             InputField::Duration => InputField::Timestamp,
             InputField::Timestamp => InputField::Description,
         };
@@ -355,8 +427,15 @@ impl App {
         };
         let start_time = end_time - dur;
 
+        let tags: Vec<String> = self.input_tags
+            .split_whitespace()
+            .map(|s| s.trim_start_matches('#').to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
         self.data.add_entry(
             self.input_description.clone(),
+            tags,
             start_time,
             Some(end_time),
         );
@@ -397,6 +476,7 @@ impl App {
     fn handle_input_char(&mut self, c: char) {
         match self.input_field {
             InputField::Description => self.input_description.push(c),
+            InputField::Tags => self.input_tags.push(c),
             InputField::Duration => self.input_duration.push(c),
             InputField::Timestamp => self.input_timestamp.push(c),
         }
@@ -405,6 +485,7 @@ impl App {
     fn handle_input_backspace(&mut self) {
         match self.input_field {
             InputField::Description => { self.input_description.pop(); }
+            InputField::Tags => { self.input_tags.pop(); }
             InputField::Duration => { self.input_duration.pop(); }
             InputField::Timestamp => { self.input_timestamp.pop(); }
         }
@@ -446,6 +527,8 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Char('q') | KeyCode::Esc => {
                                 if app.is_searching() {
                                     app.clear_search();
+                                } else if app.is_tag_filtering() {
+                                    app.clear_tag_filter();
                                 } else {
                                     app.should_quit = true;
                                 }
@@ -457,6 +540,7 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Char('r') => app.reload()?,
                             KeyCode::Char('a') => app.start_adding(),
                             KeyCode::Char('e') => app.start_editing(),
+                            KeyCode::Char('f') => app.filter_by_selected_tags(),
                             KeyCode::Char('/') => app.start_search(),
                             // View mode switching
                             KeyCode::Char('1') => app.set_view_mode(ViewMode::Day),
@@ -618,9 +702,11 @@ fn ui(f: &mut Frame, app: &mut App) {
         render_entries_table(f, app, chunks[content_idx]);
     }
 
-    // Footer with help - show filtered total when searching
+    // Footer with help - show filtered total when searching or tag filtering
     let (total, total_label) = if app.is_searching() && !app.search_term.is_empty() {
         (app.filtered_total(), "Filtered: ")
+    } else if app.is_tag_filtering() {
+        (app.filtered_total(), "Tagged: ")
     } else {
         let t = match app.view_mode {
             ViewMode::All => app.data.today_total(),
@@ -648,6 +734,8 @@ fn ui(f: &mut Frame, app: &mut App) {
         Span::styled(": nav | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("/", Style::default().fg(theme::ACCENT)),
         Span::styled(": search | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("f", Style::default().fg(theme::ACCENT)),
+        Span::styled(": filter tags | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("a", Style::default().fg(theme::ACCENT)),
         Span::styled(": add | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("e", Style::default().fg(theme::ACCENT)),
@@ -793,6 +881,7 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Length(3),
+            Constraint::Length(3),
             Constraint::Min(0),
         ])
         .split(area);
@@ -819,6 +908,28 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         .block(desc_block);
     f.render_widget(desc_input, chunks[0]);
 
+    // Tags input
+    let tags_style = if app.input_field == InputField::Tags {
+        Style::default().fg(theme::ACCENT)
+    } else {
+        Style::default().fg(theme::INACTIVE)
+    };
+    let tags_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(tags_style)
+        .title(Span::styled(
+            " Tags (space-separated, e.g., work meeting) ",
+            if app.input_field == InputField::Tags {
+                Style::default().fg(theme::HIGHLIGHT)
+            } else {
+                Style::default().fg(theme::TITLE)
+            },
+        ));
+    let tags_input = Paragraph::new(app.input_tags.as_str())
+        .style(Style::default().fg(Color::White))
+        .block(tags_block);
+    f.render_widget(tags_input, chunks[1]);
+
     // Duration input
     let dur_style = if app.input_field == InputField::Duration {
         Style::default().fg(theme::ACCENT)
@@ -839,7 +950,7 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     let dur_input = Paragraph::new(app.input_duration.as_str())
         .style(Style::default().fg(Color::White))
         .block(dur_block);
-    f.render_widget(dur_input, chunks[1]);
+    f.render_widget(dur_input, chunks[2]);
 
     // Timestamp input (optional)
     let ts_style = if app.input_field == InputField::Timestamp {
@@ -861,7 +972,7 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     let ts_input = Paragraph::new(app.input_timestamp.as_str())
         .style(Style::default().fg(Color::White))
         .block(ts_block);
-    f.render_widget(ts_input, chunks[2]);
+    f.render_widget(ts_input, chunks[3]);
 
     // Help text
     let help = Paragraph::new(Line::from(vec![
@@ -878,7 +989,7 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
             .border_style(Style::default().fg(theme::BORDER))
             .title(Span::styled(form_title, Style::default().fg(theme::HIGHLIGHT))),
     );
-    f.render_widget(help, chunks[3]);
+    f.render_widget(help, chunks[4]);
 
     // Show cursor in active field
     let (cursor_x, cursor_y) = match app.input_field {
@@ -886,20 +997,24 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
             chunks[0].x + app.input_description.len() as u16 + 1,
             chunks[0].y + 1,
         ),
-        InputField::Duration => (
-            chunks[1].x + app.input_duration.len() as u16 + 1,
+        InputField::Tags => (
+            chunks[1].x + app.input_tags.len() as u16 + 1,
             chunks[1].y + 1,
         ),
-        InputField::Timestamp => (
-            chunks[2].x + app.input_timestamp.len() as u16 + 1,
+        InputField::Duration => (
+            chunks[2].x + app.input_duration.len() as u16 + 1,
             chunks[2].y + 1,
+        ),
+        InputField::Timestamp => (
+            chunks[3].x + app.input_timestamp.len() as u16 + 1,
+            chunks[3].y + 1,
         ),
     };
     f.set_cursor_position((cursor_x, cursor_y));
 }
 
 fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
-    let header_cells = ["Date", "Time", "Description", "Duration", ""]
+    let header_cells = ["Date", "Time", "Description", "Tags", "Duration", ""]
         .into_iter()
         .map(|h| {
             Cell::from(h).style(
@@ -944,6 +1059,8 @@ fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
                 Cell::from(entry.start_time.format("%H:%M").to_string())
                     .style(Style::default().fg(theme::ACCENT)),
                 Cell::from(entry.description.clone()),
+                Cell::from(entry.format_tags())
+                    .style(Style::default().fg(theme::HIGHLIGHT)),
                 Cell::from(entry.format_duration()).style(Style::default().fg(dur_color)),
                 Cell::from(entry.status_icon()).style(status_style),
             ])
@@ -951,12 +1068,20 @@ fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
+    // Build title with tag filter info
+    let title = if app.is_tag_filtering() {
+        format!(" Entries [filtered: {}] ", app.tag_filter.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" "))
+    } else {
+        " Entries ".to_string()
+    };
+
     let table = Table::new(
         rows,
         [
             Constraint::Length(12),
             Constraint::Length(8),
-            Constraint::Min(20),
+            Constraint::Min(15),
+            Constraint::Length(15),
             Constraint::Length(10),
             Constraint::Length(3),
         ],
@@ -966,7 +1091,7 @@ fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::BORDER))
-            .title(Span::styled(" Entries ", Style::default().fg(theme::TITLE))),
+            .title(Span::styled(title, Style::default().fg(theme::TITLE))),
     )
     .row_highlight_style(Style::default().bg(theme::SELECTED_BG))
     .highlight_symbol(">> ");

@@ -8,8 +8,27 @@ use crate::icons;
 pub struct TimeEntry {
     pub id: u64,
     pub description: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub start_time: DateTime<Local>,
     pub end_time: Option<DateTime<Local>>,
+}
+
+/// Parse tags (words starting with #) from text and return (clean_text, tags)
+pub fn parse_tags(text: &str) -> (String, Vec<String>) {
+    let mut tags = Vec::new();
+    let mut clean_parts = Vec::new();
+    
+    for word in text.split_whitespace() {
+        if word.starts_with('#') && word.len() > 1 {
+            // Remove the # prefix and add to tags
+            tags.push(word[1..].to_string());
+        } else {
+            clean_parts.push(word);
+        }
+    }
+    
+    (clean_parts.join(" "), tags)
 }
 
 impl TimeEntry {
@@ -33,6 +52,22 @@ impl TimeEntry {
         } else {
             ""
         }
+    }
+
+    /// Format tags for display (with # prefix)
+    pub fn format_tags(&self) -> String {
+        self.tags.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" ")
+    }
+
+    /// Check if entry has a specific tag (case-insensitive)
+    pub fn has_tag(&self, tag: &str) -> bool {
+        let tag_lower = tag.to_lowercase();
+        self.tags.iter().any(|t| t.to_lowercase() == tag_lower)
+    }
+
+    /// Check if entry matches any of the given tags (case-insensitive)
+    pub fn has_any_tag(&self, tags: &[String]) -> bool {
+        tags.iter().any(|t| self.has_tag(t))
     }
 }
 
@@ -78,12 +113,14 @@ impl TimeData {
     pub fn add_entry(
         &mut self,
         description: String,
+        tags: Vec<String>,
         start_time: DateTime<Local>,
         end_time: Option<DateTime<Local>>,
     ) -> &TimeEntry {
         let entry = TimeEntry {
             id: self.next_id,
             description,
+            tags,
             start_time,
             end_time,
         };
@@ -147,11 +184,13 @@ impl TimeData {
         &mut self,
         id: u64,
         description: String,
+        tags: Vec<String>,
         start_time: DateTime<Local>,
         end_time: Option<DateTime<Local>>,
     ) -> bool {
         if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
             entry.description = description;
+            entry.tags = tags;
             entry.start_time = start_time;
             entry.end_time = end_time;
             true
