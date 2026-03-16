@@ -55,6 +55,7 @@ impl ViewMode {
 enum InputMode {
     Normal,
     AddingEntry,
+    Searching,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -76,6 +77,8 @@ struct App {
     input_description: String,
     input_duration: String,
     input_timestamp: String, // Optional: end time like "14:30" or "2024-03-16 14:30"
+    // Search state
+    search_term: String,
 }
 
 impl App {
@@ -91,6 +94,7 @@ impl App {
             input_description: String::new(),
             input_duration: String::new(),
             input_timestamp: String::new(),
+            search_term: String::new(),
         })
     }
 
@@ -100,7 +104,7 @@ impl App {
     }
 
     fn filtered_entries(&self) -> Vec<&crate::tracker::TimeEntry> {
-        match self.view_mode {
+        let entries: Vec<_> = match self.view_mode {
             ViewMode::All => self.data.entries.iter().rev().collect(),
             ViewMode::Day => {
                 let mut entries: Vec<_> = self.data.entries_for_date(self.selected_date);
@@ -113,7 +117,52 @@ impl App {
                 entries.reverse();
                 entries
             }
+        };
+
+        // Apply search filter if search term is not empty
+        if self.search_term.is_empty() {
+            entries
+        } else {
+            let search_lower = self.search_term.to_lowercase();
+            entries
+                .into_iter()
+                .filter(|e| e.description.to_lowercase().contains(&search_lower))
+                .collect()
         }
+    }
+
+    fn filtered_total(&self) -> Duration {
+        self.filtered_entries()
+            .iter()
+            .fold(Duration::zero(), |acc, e| acc + e.duration())
+    }
+
+    fn is_searching(&self) -> bool {
+        !self.search_term.is_empty() || self.input_mode == InputMode::Searching
+    }
+
+    fn start_search(&mut self) {
+        self.input_mode = InputMode::Searching;
+    }
+
+    fn clear_search(&mut self) {
+        self.search_term.clear();
+        self.input_mode = InputMode::Normal;
+        self.table_state.select(Some(0));
+    }
+
+    fn handle_search_char(&mut self, c: char) {
+        self.search_term.push(c);
+        self.table_state.select(Some(0));
+    }
+
+    fn handle_search_backspace(&mut self) {
+        self.search_term.pop();
+        self.table_state.select(Some(0));
+    }
+
+    fn confirm_search(&mut self) {
+        self.input_mode = InputMode::Normal;
     }
 
     fn next(&mut self) {
@@ -333,13 +382,20 @@ pub fn run_tui() -> Result<()> {
                 if key.kind == KeyEventKind::Press {
                     match app.input_mode {
                         InputMode::Normal => match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                if app.is_searching() {
+                                    app.clear_search();
+                                } else {
+                                    app.should_quit = true;
+                                }
+                            }
                             KeyCode::Char('j') | KeyCode::Down => app.next(),
                             KeyCode::Char('k') | KeyCode::Up => app.previous(),
                             KeyCode::Char('d') => app.delete_selected()?,
                             KeyCode::Char('s') => app.stop_active()?,
                             KeyCode::Char('r') => app.reload()?,
                             KeyCode::Char('a') => app.start_adding(),
+                            KeyCode::Char('/') => app.start_search(),
                             // View mode switching
                             KeyCode::Char('1') => app.set_view_mode(ViewMode::Day),
                             KeyCode::Char('2') => app.set_view_mode(ViewMode::Week),
@@ -358,6 +414,13 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Char(c) => app.handle_input_char(c),
                             _ => {}
                         },
+                        InputMode::Searching => match key.code {
+                            KeyCode::Esc => app.clear_search(),
+                            KeyCode::Enter => app.confirm_search(),
+                            KeyCode::Backspace => app.handle_search_backspace(),
+                            KeyCode::Char(c) => app.handle_search_char(c),
+                            _ => {}
+                        },
                     }
                 }
             }
@@ -373,14 +436,26 @@ pub fn run_tui() -> Result<()> {
 }
 
 fn ui(f: &mut Frame, app: &mut App) {
+    // Adjust layout based on whether search is active
+    let show_search = app.is_searching();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Status
-            Constraint::Length(3), // Tabs + date info
-            Constraint::Min(10),   // Main content
-            Constraint::Length(3), // Footer
-        ])
+        .constraints(if show_search {
+            vec![
+                Constraint::Length(3), // Status
+                Constraint::Length(3), // Tabs + date info
+                Constraint::Length(3), // Search bar
+                Constraint::Min(10),   // Main content
+                Constraint::Length(3), // Footer
+            ]
+        } else {
+            vec![
+                Constraint::Length(3), // Status
+                Constraint::Length(3), // Tabs + date info
+                Constraint::Min(10),   // Main content
+                Constraint::Length(3), // Footer
+            ]
+        })
         .split(f.area());
 
     // Header with status
@@ -446,15 +521,23 @@ fn ui(f: &mut Frame, app: &mut App) {
         );
     f.render_widget(tabs, chunks[1]);
 
+    // Determine chunk indices based on layout
+    let (content_idx, footer_idx) = if show_search { (3, 4) } else { (2, 3) };
+
+    // Render search bar if active
+    if show_search {
+        render_search_bar(f, app, chunks[2]);
+    }
+
     // Main content area - split between breakdown and entries in Week view
     if app.input_mode == InputMode::AddingEntry {
         // Show add entry form
-        render_add_entry_form(f, app, chunks[2]);
+        render_add_entry_form(f, app, chunks[content_idx]);
     } else if app.view_mode == ViewMode::Week {
         let content_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(25), Constraint::Min(40)])
-            .split(chunks[2]);
+            .split(chunks[content_idx]);
 
         // Daily breakdown panel
         render_weekly_breakdown(f, app, content_chunks[0]);
@@ -462,22 +545,27 @@ fn ui(f: &mut Frame, app: &mut App) {
         // Entries table
         render_entries_table(f, app, content_chunks[1]);
     } else {
-        render_entries_table(f, app, chunks[2]);
+        render_entries_table(f, app, chunks[content_idx]);
     }
 
-    // Footer with help
-    let total = match app.view_mode {
-        ViewMode::All => app.data.today_total(),
-        ViewMode::Day => app.data.total_for_date(app.selected_date),
-        ViewMode::Week => {
-            let week_start = TimeData::week_start(app.selected_date);
-            app.data.total_for_week(week_start)
-        }
+    // Footer with help - show filtered total when searching
+    let (total, total_label) = if app.is_searching() && !app.search_term.is_empty() {
+        (app.filtered_total(), "Filtered: ")
+    } else {
+        let t = match app.view_mode {
+            ViewMode::All => app.data.today_total(),
+            ViewMode::Day => app.data.total_for_date(app.selected_date),
+            ViewMode::Week => {
+                let week_start = TimeData::week_start(app.selected_date);
+                app.data.total_for_week(week_start)
+            }
+        };
+        (t, "Total: ")
     };
 
     let total_str = duration::format(total);
     let footer = Paragraph::new(Line::from(vec![
-        Span::styled(" Total: ", Style::default().fg(theme::TITLE)),
+        Span::styled(format!(" {}", total_label), Style::default().fg(theme::TITLE)),
         Span::styled(total_str, Style::default().fg(theme::HIGHLIGHT).bold()),
         Span::styled(" | ", Style::default().fg(theme::BORDER)),
         Span::styled("h/l", Style::default().fg(theme::ACCENT)),
@@ -488,6 +576,8 @@ fn ui(f: &mut Frame, app: &mut App) {
         Span::styled(": views | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("j/k", Style::default().fg(theme::ACCENT)),
         Span::styled(": nav | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("/", Style::default().fg(theme::ACCENT)),
+        Span::styled(": search | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("a", Style::default().fg(theme::ACCENT)),
         Span::styled(": add | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("d", Style::default().fg(theme::ACCENT)),
@@ -502,7 +592,7 @@ fn ui(f: &mut Frame, app: &mut App) {
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::BORDER)),
     );
-    f.render_widget(footer, chunks[3]);
+    f.render_widget(footer, chunks[footer_idx]);
 }
 
 fn render_weekly_breakdown(f: &mut Frame, app: &App, area: Rect) {
@@ -566,6 +656,57 @@ fn render_weekly_breakdown(f: &mut Frame, app: &App, area: Rect) {
     );
 
     f.render_widget(table, area);
+}
+
+fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
+    let is_active = app.input_mode == InputMode::Searching;
+    let border_style = if is_active {
+        Style::default().fg(theme::ACCENT)
+    } else {
+        Style::default().fg(theme::BORDER)
+    };
+
+    let match_count = app.filtered_entries().len();
+    let match_info = if app.search_term.is_empty() {
+        String::new()
+    } else {
+        format!(" ({} matches)", match_count)
+    };
+
+    let search_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style)
+        .title(Span::styled(
+            format!(" Search{} ", match_info),
+            if is_active {
+                Style::default().fg(theme::HIGHLIGHT)
+            } else {
+                Style::default().fg(theme::TITLE)
+            },
+        ));
+
+    let search_text = if is_active && app.search_term.is_empty() {
+        "Type to search... (Enter to confirm, Esc to clear)"
+    } else {
+        &app.search_term
+    };
+
+    let search_input = Paragraph::new(search_text)
+        .style(if app.search_term.is_empty() && is_active {
+            Style::default().fg(theme::INACTIVE).italic()
+        } else {
+            Style::default().fg(Color::White)
+        })
+        .block(search_block);
+    f.render_widget(search_input, area);
+
+    // Show cursor if actively searching
+    if is_active {
+        f.set_cursor_position((
+            area.x + app.search_term.len() as u16 + 1,
+            area.y + 1,
+        ));
+    }
 }
 
 fn render_add_entry_form(f: &mut Frame, app: &App, area: Rect) {
