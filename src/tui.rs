@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{Duration, Local, NaiveDate};
+use chrono::{DateTime, Duration, Local, NaiveDate};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -51,12 +51,31 @@ impl ViewMode {
     }
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum InputMode {
+    Normal,
+    AddingEntry,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum InputField {
+    Description,
+    Duration,
+    Timestamp,
+}
+
 struct App {
     data: TimeData,
     table_state: TableState,
     should_quit: bool,
     view_mode: ViewMode,
     selected_date: NaiveDate,
+    // Input mode state
+    input_mode: InputMode,
+    input_field: InputField,
+    input_description: String,
+    input_duration: String,
+    input_timestamp: String, // Optional: end time like "14:30" or "2024-03-16 14:30"
 }
 
 impl App {
@@ -67,6 +86,11 @@ impl App {
             should_quit: false,
             view_mode: ViewMode::Day,
             selected_date: Local::now().date_naive(),
+            input_mode: InputMode::Normal,
+            input_field: InputField::Description,
+            input_description: String::new(),
+            input_duration: String::new(),
+            input_timestamp: String::new(),
         })
     }
 
@@ -179,6 +203,102 @@ impl App {
         self.selected_date = Local::now().date_naive();
         self.table_state.select(Some(0));
     }
+
+    fn start_adding(&mut self) {
+        self.input_mode = InputMode::AddingEntry;
+        self.input_field = InputField::Description;
+        self.input_description.clear();
+        self.input_duration.clear();
+        self.input_timestamp.clear();
+    }
+
+    fn cancel_adding(&mut self) {
+        self.input_mode = InputMode::Normal;
+        self.input_description.clear();
+        self.input_duration.clear();
+        self.input_timestamp.clear();
+    }
+
+    fn next_input_field(&mut self) {
+        self.input_field = match self.input_field {
+            InputField::Description => InputField::Duration,
+            InputField::Duration => InputField::Timestamp,
+            InputField::Timestamp => InputField::Description,
+        };
+    }
+
+    fn submit_entry(&mut self) -> Result<()> {
+        if self.input_description.is_empty() || self.input_duration.is_empty() {
+            return Ok(()); // Don't submit if empty
+        }
+
+        let dur = duration::parse(&self.input_duration);
+        if dur.num_seconds() <= 0 {
+            return Ok(()); // Invalid duration
+        }
+
+        // Parse end time from timestamp or use now
+        let end_time = if self.input_timestamp.is_empty() {
+            Local::now()
+        } else {
+            self.parse_timestamp().unwrap_or_else(Local::now)
+        };
+        let start_time = end_time - dur;
+
+        self.data.add_entry(
+            self.input_description.clone(),
+            start_time,
+            Some(end_time),
+        );
+        save_data(&self.data)?;
+
+        self.cancel_adding();
+        Ok(())
+    }
+
+    fn parse_timestamp(&self) -> Option<DateTime<Local>> {
+        use chrono::NaiveTime;
+        
+        let input = self.input_timestamp.trim();
+        
+        // Try parsing as time only (HH:MM) - assumes today or selected date
+        if let Ok(time) = NaiveTime::parse_from_str(input, "%H:%M") {
+            let date = self.selected_date;
+            let naive_dt = date.and_time(time);
+            return Some(naive_dt.and_local_timezone(Local).single()?);
+        }
+        
+        // Try parsing as full datetime (YYYY-MM-DD HH:MM)
+        if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(input, "%Y-%m-%d %H:%M") {
+            return Some(naive_dt.and_local_timezone(Local).single()?);
+        }
+        
+        // Try parsing as date and time (MM-DD HH:MM) - assumes current year
+        if input.len() >= 11 {
+            let with_year = format!("{}-{}", Local::now().format("%Y"), input);
+            if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&with_year, "%Y-%m-%d %H:%M") {
+                return Some(naive_dt.and_local_timezone(Local).single()?);
+            }
+        }
+        
+        None
+    }
+
+    fn handle_input_char(&mut self, c: char) {
+        match self.input_field {
+            InputField::Description => self.input_description.push(c),
+            InputField::Duration => self.input_duration.push(c),
+            InputField::Timestamp => self.input_timestamp.push(c),
+        }
+    }
+
+    fn handle_input_backspace(&mut self) {
+        match self.input_field {
+            InputField::Description => { self.input_description.pop(); }
+            InputField::Duration => { self.input_duration.pop(); }
+            InputField::Timestamp => { self.input_timestamp.pop(); }
+        }
+    }
 }
 
 fn setup_terminal() -> Result<Terminal<CrosstermBackend<Stdout>>> {
@@ -211,22 +331,33 @@ pub fn run_tui() -> Result<()> {
         if event::poll(std::time::Duration::from_millis(250))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
-                        KeyCode::Char('j') | KeyCode::Down => app.next(),
-                        KeyCode::Char('k') | KeyCode::Up => app.previous(),
-                        KeyCode::Char('d') => app.delete_selected()?,
-                        KeyCode::Char('s') => app.stop_active()?,
-                        KeyCode::Char('r') => app.reload()?,
-                        // View mode switching
-                        KeyCode::Char('1') => app.set_view_mode(ViewMode::Day),
-                        KeyCode::Char('2') => app.set_view_mode(ViewMode::Week),
-                        KeyCode::Char('3') => app.set_view_mode(ViewMode::All),
-                        // Date navigation
-                        KeyCode::Char('h') | KeyCode::Left => app.previous_period(),
-                        KeyCode::Char('l') | KeyCode::Right => app.next_period(),
-                        KeyCode::Char('t') => app.go_to_today(),
-                        _ => {}
+                    match app.input_mode {
+                        InputMode::Normal => match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+                            KeyCode::Char('j') | KeyCode::Down => app.next(),
+                            KeyCode::Char('k') | KeyCode::Up => app.previous(),
+                            KeyCode::Char('d') => app.delete_selected()?,
+                            KeyCode::Char('s') => app.stop_active()?,
+                            KeyCode::Char('r') => app.reload()?,
+                            KeyCode::Char('a') => app.start_adding(),
+                            // View mode switching
+                            KeyCode::Char('1') => app.set_view_mode(ViewMode::Day),
+                            KeyCode::Char('2') => app.set_view_mode(ViewMode::Week),
+                            KeyCode::Char('3') => app.set_view_mode(ViewMode::All),
+                            // Date navigation
+                            KeyCode::Char('h') | KeyCode::Left => app.previous_period(),
+                            KeyCode::Char('l') | KeyCode::Right => app.next_period(),
+                            KeyCode::Char('t') => app.go_to_today(),
+                            _ => {}
+                        },
+                        InputMode::AddingEntry => match key.code {
+                            KeyCode::Esc => app.cancel_adding(),
+                            KeyCode::Enter => app.submit_entry()?,
+                            KeyCode::Tab => app.next_input_field(),
+                            KeyCode::Backspace => app.handle_input_backspace(),
+                            KeyCode::Char(c) => app.handle_input_char(c),
+                            _ => {}
+                        },
                     }
                 }
             }
@@ -316,7 +447,10 @@ fn ui(f: &mut Frame, app: &mut App) {
     f.render_widget(tabs, chunks[1]);
 
     // Main content area - split between breakdown and entries in Week view
-    if app.view_mode == ViewMode::Week {
+    if app.input_mode == InputMode::AddingEntry {
+        // Show add entry form
+        render_add_entry_form(f, app, chunks[2]);
+    } else if app.view_mode == ViewMode::Week {
         let content_chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(25), Constraint::Min(40)])
@@ -354,6 +488,8 @@ fn ui(f: &mut Frame, app: &mut App) {
         Span::styled(": views | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("j/k", Style::default().fg(theme::ACCENT)),
         Span::styled(": nav | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("a", Style::default().fg(theme::ACCENT)),
+        Span::styled(": add | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("d", Style::default().fg(theme::ACCENT)),
         Span::styled(": del | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("s", Style::default().fg(theme::ACCENT)),
@@ -430,6 +566,120 @@ fn render_weekly_breakdown(f: &mut Frame, app: &App, area: Rect) {
     );
 
     f.render_widget(table, area);
+}
+
+fn render_add_entry_form(f: &mut Frame, app: &App, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(2)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(0),
+        ])
+        .split(area);
+
+    // Description input
+    let desc_style = if app.input_field == InputField::Description {
+        Style::default().fg(theme::ACCENT)
+    } else {
+        Style::default().fg(theme::INACTIVE)
+    };
+    let desc_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(desc_style)
+        .title(Span::styled(
+            " Description ",
+            if app.input_field == InputField::Description {
+                Style::default().fg(theme::HIGHLIGHT)
+            } else {
+                Style::default().fg(theme::TITLE)
+            },
+        ));
+    let desc_input = Paragraph::new(app.input_description.as_str())
+        .style(Style::default().fg(Color::White))
+        .block(desc_block);
+    f.render_widget(desc_input, chunks[0]);
+
+    // Duration input
+    let dur_style = if app.input_field == InputField::Duration {
+        Style::default().fg(theme::ACCENT)
+    } else {
+        Style::default().fg(theme::INACTIVE)
+    };
+    let dur_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(dur_style)
+        .title(Span::styled(
+            " Duration (e.g., 1h30m, 45m, 2h) ",
+            if app.input_field == InputField::Duration {
+                Style::default().fg(theme::HIGHLIGHT)
+            } else {
+                Style::default().fg(theme::TITLE)
+            },
+        ));
+    let dur_input = Paragraph::new(app.input_duration.as_str())
+        .style(Style::default().fg(Color::White))
+        .block(dur_block);
+    f.render_widget(dur_input, chunks[1]);
+
+    // Timestamp input (optional)
+    let ts_style = if app.input_field == InputField::Timestamp {
+        Style::default().fg(theme::ACCENT)
+    } else {
+        Style::default().fg(theme::INACTIVE)
+    };
+    let ts_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(ts_style)
+        .title(Span::styled(
+            " End Time (optional: HH:MM or YYYY-MM-DD HH:MM, blank=now) ",
+            if app.input_field == InputField::Timestamp {
+                Style::default().fg(theme::HIGHLIGHT)
+            } else {
+                Style::default().fg(theme::TITLE)
+            },
+        ));
+    let ts_input = Paragraph::new(app.input_timestamp.as_str())
+        .style(Style::default().fg(Color::White))
+        .block(ts_block);
+    f.render_widget(ts_input, chunks[2]);
+
+    // Help text
+    let help = Paragraph::new(Line::from(vec![
+        Span::styled("Tab", Style::default().fg(theme::ACCENT)),
+        Span::styled(": switch field | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("Enter", Style::default().fg(theme::ACCENT)),
+        Span::styled(": save | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("Esc", Style::default().fg(theme::ACCENT)),
+        Span::styled(": cancel", Style::default().fg(theme::INACTIVE)),
+    ]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(theme::BORDER))
+            .title(Span::styled(" Add Log Entry ", Style::default().fg(theme::HIGHLIGHT))),
+    );
+    f.render_widget(help, chunks[3]);
+
+    // Show cursor in active field
+    let (cursor_x, cursor_y) = match app.input_field {
+        InputField::Description => (
+            chunks[0].x + app.input_description.len() as u16 + 1,
+            chunks[0].y + 1,
+        ),
+        InputField::Duration => (
+            chunks[1].x + app.input_duration.len() as u16 + 1,
+            chunks[1].y + 1,
+        ),
+        InputField::Timestamp => (
+            chunks[2].x + app.input_timestamp.len() as u16 + 1,
+            chunks[2].y + 1,
+        ),
+    };
+    f.set_cursor_position((cursor_x, cursor_y));
 }
 
 fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
