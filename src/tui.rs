@@ -55,6 +55,7 @@ impl ViewMode {
 enum InputMode {
     Normal,
     AddingEntry,
+    EditingEntry,
     Searching,
 }
 
@@ -79,6 +80,8 @@ struct App {
     input_timestamp: String, // Optional: end time like "14:30" or "2024-03-16 14:30"
     // Search state
     search_term: String,
+    // Edit state
+    editing_entry_id: Option<u64>,
 }
 
 impl App {
@@ -95,6 +98,7 @@ impl App {
             input_duration: String::new(),
             input_timestamp: String::new(),
             search_term: String::new(),
+            editing_entry_id: None,
         })
     }
 
@@ -266,6 +270,63 @@ impl App {
         self.input_description.clear();
         self.input_duration.clear();
         self.input_timestamp.clear();
+        self.editing_entry_id = None;
+    }
+
+    fn start_editing(&mut self) {
+        // Extract entry data first to avoid borrow conflicts
+        let entry_data = {
+            let filtered = self.filtered_entries();
+            self.table_state.selected().and_then(|idx| {
+                filtered.get(idx).map(|entry| {
+                    (
+                        entry.id,
+                        entry.description.clone(),
+                        entry.format_duration(),
+                        entry.end_time.map(|t| t.format("%Y-%m-%d %H:%M").to_string()),
+                    )
+                })
+            })
+        };
+
+        if let Some((id, description, duration, end_time)) = entry_data {
+            self.editing_entry_id = Some(id);
+            self.input_description = description;
+            self.input_duration = duration;
+            self.input_timestamp = end_time.unwrap_or_default();
+            self.input_mode = InputMode::EditingEntry;
+            self.input_field = InputField::Description;
+        }
+    }
+
+    fn submit_edit(&mut self) -> Result<()> {
+        let entry_id = match self.editing_entry_id {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+
+        if self.input_description.is_empty() || self.input_duration.is_empty() {
+            return Ok(()); // Don't submit if empty
+        }
+
+        let dur = duration::parse(&self.input_duration);
+        if dur.num_seconds() <= 0 {
+            return Ok(()); // Invalid duration
+        }
+
+        // Parse end time from timestamp or use now
+        let end_time = if self.input_timestamp.is_empty() {
+            Some(Local::now())
+        } else {
+            Some(self.parse_timestamp().unwrap_or_else(Local::now))
+        };
+        let start_time = end_time.unwrap() - dur;
+
+        self.data.update_entry(entry_id, self.input_description.clone(), start_time, end_time);
+        save_data(&self.data)?;
+
+        self.cancel_adding(); // Reuse to clear fields
+        Ok(())
     }
 
     fn next_input_field(&mut self) {
@@ -395,6 +456,7 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Char('s') => app.stop_active()?,
                             KeyCode::Char('r') => app.reload()?,
                             KeyCode::Char('a') => app.start_adding(),
+                            KeyCode::Char('e') => app.start_editing(),
                             KeyCode::Char('/') => app.start_search(),
                             // View mode switching
                             KeyCode::Char('1') => app.set_view_mode(ViewMode::Day),
@@ -409,6 +471,14 @@ pub fn run_tui() -> Result<()> {
                         InputMode::AddingEntry => match key.code {
                             KeyCode::Esc => app.cancel_adding(),
                             KeyCode::Enter => app.submit_entry()?,
+                            KeyCode::Tab => app.next_input_field(),
+                            KeyCode::Backspace => app.handle_input_backspace(),
+                            KeyCode::Char(c) => app.handle_input_char(c),
+                            _ => {}
+                        },
+                        InputMode::EditingEntry => match key.code {
+                            KeyCode::Esc => app.cancel_adding(),
+                            KeyCode::Enter => app.submit_edit()?,
                             KeyCode::Tab => app.next_input_field(),
                             KeyCode::Backspace => app.handle_input_backspace(),
                             KeyCode::Char(c) => app.handle_input_char(c),
@@ -530,9 +600,9 @@ fn ui(f: &mut Frame, app: &mut App) {
     }
 
     // Main content area - split between breakdown and entries in Week view
-    if app.input_mode == InputMode::AddingEntry {
-        // Show add entry form
-        render_add_entry_form(f, app, chunks[content_idx]);
+    if app.input_mode == InputMode::AddingEntry || app.input_mode == InputMode::EditingEntry {
+        // Show add/edit entry form
+        render_entry_form(f, app, chunks[content_idx]);
     } else if app.view_mode == ViewMode::Week {
         let content_chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -580,6 +650,8 @@ fn ui(f: &mut Frame, app: &mut App) {
         Span::styled(": search | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("a", Style::default().fg(theme::ACCENT)),
         Span::styled(": add | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("e", Style::default().fg(theme::ACCENT)),
+        Span::styled(": edit | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("d", Style::default().fg(theme::ACCENT)),
         Span::styled(": del | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("s", Style::default().fg(theme::ACCENT)),
@@ -709,7 +781,10 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_add_entry_form(f: &mut Frame, app: &App, area: Rect) {
+fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
+    let is_editing = app.input_mode == InputMode::EditingEntry;
+    let form_title = if is_editing { " Edit Entry " } else { " Add Log Entry " };
+    
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
@@ -801,7 +876,7 @@ fn render_add_entry_form(f: &mut Frame, app: &App, area: Rect) {
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::BORDER))
-            .title(Span::styled(" Add Log Entry ", Style::default().fg(theme::HIGHLIGHT))),
+            .title(Span::styled(form_title, Style::default().fg(theme::HIGHLIGHT))),
     );
     f.render_widget(help, chunks[3]);
 

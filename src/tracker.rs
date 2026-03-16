@@ -141,4 +141,27 @@ impl TimeData {
             })
             .collect()
     }
+
+    /// Update an existing entry by ID
+    pub fn update_entry(
+        &mut self,
+        id: u64,
+        description: String,
+        start_time: DateTime<Local>,
+        end_time: Option<DateTime<Local>>,
+    ) -> bool {
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
+            entry.description = description;
+            entry.start_time = start_time;
+            entry.end_time = end_time;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Get an entry by ID
+    pub fn get_entry(&self, id: u64) -> Option<&TimeEntry> {
+        self.entries.iter().find(|e| e.id == id)
+    }
 }
