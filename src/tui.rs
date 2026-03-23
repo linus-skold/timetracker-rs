@@ -63,8 +63,31 @@ enum InputMode {
 enum InputField {
     Description,
     Tags,
+    StartTime,
+    EndTime,
     Duration,
-    Timestamp,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum SortOrder {
+    NewestFirst,
+    OldestFirst,
+}
+
+impl SortOrder {
+    fn toggle(self) -> Self {
+        match self {
+            SortOrder::NewestFirst => SortOrder::OldestFirst,
+            SortOrder::OldestFirst => SortOrder::NewestFirst,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            SortOrder::NewestFirst => "newest first",
+            SortOrder::OldestFirst => "oldest first",
+        }
+    }
 }
 
 struct App {
@@ -78,14 +101,17 @@ struct App {
     input_field: InputField,
     input_description: String,
     input_tags: String, // Space-separated tags (without #)
+    input_start_time: String, // Optional: start time like "14:30" or "2024-03-16 14:30"
+    input_end_time: String,   // Optional: end time like "14:30" or "2024-03-16 14:30"
     input_duration: String,
-    input_timestamp: String, // Optional: end time like "14:30" or "2024-03-16 14:30"
     // Search state
     search_term: String,
     // Tag filter state
     tag_filter: Vec<String>,
     // Edit state
     editing_entry_id: Option<u64>,
+    // Sort order
+    sort_order: SortOrder,
 }
 
 impl App {
@@ -100,11 +126,13 @@ impl App {
             input_field: InputField::Description,
             input_description: String::new(),
             input_tags: String::new(),
+            input_start_time: String::new(),
+            input_end_time: String::new(),
             input_duration: String::new(),
-            input_timestamp: String::new(),
             search_term: String::new(),
             tag_filter: Vec::new(),
             editing_entry_id: None,
+            sort_order: SortOrder::NewestFirst,
         })
     }
 
@@ -114,20 +142,22 @@ impl App {
     }
 
     fn filtered_entries(&self) -> Vec<&crate::tracker::TimeEntry> {
-        let entries: Vec<_> = match self.view_mode {
-            ViewMode::All => self.data.entries.iter().rev().collect(),
-            ViewMode::Day => {
-                let mut entries: Vec<_> = self.data.entries_for_date(self.selected_date);
-                entries.reverse();
-                entries
-            }
+        let mut entries: Vec<_> = match self.view_mode {
+            ViewMode::All => self.data.entries.iter().collect(),
+            ViewMode::Day => self.data.entries_for_date(self.selected_date),
             ViewMode::Week => {
                 let week_start = TimeData::week_start(self.selected_date);
-                let mut entries: Vec<_> = self.data.entries_for_week(week_start);
-                entries.reverse();
-                entries
+                self.data.entries_for_week(week_start)
             }
         };
+
+        // Sort: Day view by start hour; Week view by day then hour; All view by start time.
+        // The secondary sort key for Week (day) is implicit in start_time, so sorting by
+        // start_time covers all cases uniformly.
+        match self.sort_order {
+            SortOrder::NewestFirst => entries.sort_by(|a, b| b.start_time.cmp(&a.start_time)),
+            SortOrder::OldestFirst => entries.sort_by(|a, b| a.start_time.cmp(&b.start_time)),
+        }
 
         // Apply tag filter first
         let entries = if self.tag_filter.is_empty() {
@@ -318,21 +348,28 @@ impl App {
         self.table_state.select(Some(0));
     }
 
+    fn toggle_sort_order(&mut self) {
+        self.sort_order = self.sort_order.toggle();
+        self.table_state.select(Some(0));
+    }
+
     fn start_adding(&mut self) {
         self.input_mode = InputMode::AddingEntry;
         self.input_field = InputField::Description;
         self.input_description.clear();
         self.input_tags.clear();
+        self.input_start_time.clear();
+        self.input_end_time.clear();
         self.input_duration.clear();
-        self.input_timestamp.clear();
     }
 
     fn cancel_adding(&mut self) {
         self.input_mode = InputMode::Normal;
         self.input_description.clear();
         self.input_tags.clear();
+        self.input_start_time.clear();
+        self.input_end_time.clear();
         self.input_duration.clear();
-        self.input_timestamp.clear();
         self.editing_entry_id = None;
     }
 
@@ -346,19 +383,21 @@ impl App {
                         entry.id,
                         entry.description.clone(),
                         entry.tags.join(" "),
-                        entry.format_duration(),
+                        entry.start_time.format("%Y-%m-%d %H:%M").to_string(),
                         entry.end_time.map(|t| t.format("%Y-%m-%d %H:%M").to_string()),
+                        entry.end_time.map(|_| entry.format_duration()),
                     )
                 })
             })
         };
 
-        if let Some((id, description, tags, duration, end_time)) = entry_data {
+        if let Some((id, description, tags, start_time, end_time, duration)) = entry_data {
             self.editing_entry_id = Some(id);
             self.input_description = description;
             self.input_tags = tags;
-            self.input_duration = duration;
-            self.input_timestamp = end_time.unwrap_or_default();
+            self.input_start_time = start_time;
+            self.input_end_time = end_time.unwrap_or_default();
+            self.input_duration = duration.unwrap_or_default();
             self.input_mode = InputMode::EditingEntry;
             self.input_field = InputField::Description;
         }
@@ -370,22 +409,13 @@ impl App {
             None => return Ok(()),
         };
 
-        if self.input_description.is_empty() || self.input_duration.is_empty() {
-            return Ok(()); // Don't submit if empty
+        if self.input_description.is_empty() {
+            return Ok(());
         }
 
-        let dur = duration::parse(&self.input_duration);
-        if dur.num_seconds() <= 0 {
-            return Ok(()); // Invalid duration
-        }
-
-        // Parse end time from timestamp or use now
-        let end_time = if self.input_timestamp.is_empty() {
-            Some(Local::now())
-        } else {
-            Some(self.parse_timestamp().unwrap_or_else(Local::now))
+        let Some((start_time, end_time)) = self.resolve_times() else {
+            return Ok(());
         };
-        let start_time = end_time.unwrap() - dur;
 
         let tags: Vec<String> = self.input_tags
             .split_whitespace()
@@ -396,36 +426,32 @@ impl App {
         self.data.update_entry(entry_id, self.input_description.clone(), tags, start_time, end_time);
         save_data(&self.data)?;
 
-        self.cancel_adding(); // Reuse to clear fields
+        self.cancel_adding();
         Ok(())
     }
 
     fn next_input_field(&mut self) {
+        // Apply auto-fill before leaving the current field
+        let leaving = self.input_field;
+        self.apply_time_calculations(leaving);
+
         self.input_field = match self.input_field {
             InputField::Description => InputField::Tags,
-            InputField::Tags => InputField::Duration,
-            InputField::Duration => InputField::Timestamp,
-            InputField::Timestamp => InputField::Description,
+            InputField::Tags => InputField::StartTime,
+            InputField::StartTime => InputField::EndTime,
+            InputField::EndTime => InputField::Duration,
+            InputField::Duration => InputField::Description,
         };
     }
 
     fn submit_entry(&mut self) -> Result<()> {
-        if self.input_description.is_empty() || self.input_duration.is_empty() {
-            return Ok(()); // Don't submit if empty
+        if self.input_description.is_empty() {
+            return Ok(());
         }
 
-        let dur = duration::parse(&self.input_duration);
-        if dur.num_seconds() <= 0 {
-            return Ok(()); // Invalid duration
-        }
-
-        // Parse end time from timestamp or use now
-        let end_time = if self.input_timestamp.is_empty() {
-            Local::now()
-        } else {
-            self.parse_timestamp().unwrap_or_else(Local::now)
+        let Some((start_time, end_time)) = self.resolve_times() else {
+            return Ok(());
         };
-        let start_time = end_time - dur;
 
         let tags: Vec<String> = self.input_tags
             .split_whitespace()
@@ -437,7 +463,7 @@ impl App {
             self.input_description.clone(),
             tags,
             start_time,
-            Some(end_time),
+            end_time,
         );
         save_data(&self.data)?;
 
@@ -445,23 +471,118 @@ impl App {
         Ok(())
     }
 
-    fn parse_timestamp(&self) -> Option<DateTime<Local>> {
+    /// Resolve start/end times from the three input fields using the following priority:
+    /// - Start + Duration → end = start + duration (duration takes priority over a filled end time)
+    /// - Start + End (no duration) → save both
+    /// - End + Duration → start = end - duration
+    /// - Duration only → assume end = now, start = now - duration
+    /// - Start only → active entry (no end time)
+    /// Returns None if there is not enough information to determine a start time.
+    fn resolve_times(&self) -> Option<(DateTime<Local>, Option<DateTime<Local>>)> {
+        let start = if !self.input_start_time.is_empty() {
+            self.parse_time_str(&self.input_start_time)
+        } else {
+            None
+        };
+        let end = if !self.input_end_time.is_empty() {
+            self.parse_time_str(&self.input_end_time)
+        } else {
+            None
+        };
+        let dur = if !self.input_duration.is_empty() {
+            let d = duration::parse(&self.input_duration);
+            if d.num_seconds() > 0 { Some(d) } else { None }
+        } else {
+            None
+        };
+
+        match (start, end, dur) {
+            (Some(s), _, Some(d)) => Some((s, Some(s + d))),
+            (Some(s), Some(e), None) => Some((s, Some(e))),
+            (None, Some(e), Some(d)) => Some((e - d, Some(e))),
+            (None, None, Some(d)) => {
+                let now = Local::now();
+                Some((now - d, Some(now)))
+            }
+            (Some(s), None, None) => Some((s, None)),
+            _ => None,
+        }
+    }
+
+    /// When the user tabs away from a time-related field, auto-fill the missing field if possible.
+    ///
+    /// Rules (applied after leaving `leaving_field`):
+    /// - Leave StartTime:  if Dur set → End = Start + Dur; else if End set → Dur = End − Start
+    /// - Leave EndTime:    if Start + Dur set → Start = End − Dur (preserve duration, move start);
+    ///                     else if Start set (Dur empty) → Dur = End − Start;
+    ///                     else if Dur set (Start empty) → Start = End − Dur
+    /// - Leave Duration:   if Start set → End = Start + Dur; else if End set → Start = End − Dur
+    fn apply_time_calculations(&mut self, leaving_field: InputField) {
+        let start_str = self.input_start_time.clone();
+        let end_str = self.input_end_time.clone();
+        let dur_str = self.input_duration.clone();
+
+        let start = if !start_str.is_empty() { self.parse_time_str(&start_str) } else { None };
+        let end = if !end_str.is_empty() { self.parse_time_str(&end_str) } else { None };
+        let dur = if !dur_str.is_empty() {
+            let d = duration::parse(&dur_str);
+            if d.num_seconds() > 0 { Some(d) } else { None }
+        } else {
+            None
+        };
+
+        match leaving_field {
+            InputField::StartTime => {
+                if let (Some(s), Some(d)) = (start, dur) {
+                    self.input_end_time = (s + d).format("%Y-%m-%d %H:%M").to_string();
+                } else if let (Some(s), Some(e), None) = (start, end, dur) {
+                    let diff = e.signed_duration_since(s);
+                    if diff.num_seconds() > 0 {
+                        self.input_duration = duration::format(diff);
+                    }
+                }
+            }
+            InputField::EndTime => {
+                if let (Some(_s), Some(e), Some(d)) = (start, end, dur) {
+                    // Preserve duration, adjust start to maintain the same span
+                    self.input_start_time = (e - d).format("%Y-%m-%d %H:%M").to_string();
+                } else if let (Some(s), Some(e), None) = (start, end, dur) {
+                    let diff = e.signed_duration_since(s);
+                    if diff.num_seconds() > 0 {
+                        self.input_duration = duration::format(diff);
+                    }
+                } else if let (None, Some(e), Some(d)) = (start, end, dur) {
+                    self.input_start_time = (e - d).format("%Y-%m-%d %H:%M").to_string();
+                }
+            }
+            InputField::Duration => {
+                if let (Some(s), Some(d)) = (start, dur) {
+                    self.input_end_time = (s + d).format("%Y-%m-%d %H:%M").to_string();
+                } else if let (None, Some(e), Some(d)) = (start, end, dur) {
+                    self.input_start_time = (e - d).format("%Y-%m-%d %H:%M").to_string();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn parse_time_str(&self, input: &str) -> Option<DateTime<Local>> {
         use chrono::NaiveTime;
-        
-        let input = self.input_timestamp.trim();
-        
-        // Try parsing as time only (HH:MM) - assumes today or selected date
+
+        let input = input.trim();
+
+        // Try parsing as time only (HH:MM) - assumes selected date
         if let Ok(time) = NaiveTime::parse_from_str(input, "%H:%M") {
             let date = self.selected_date;
             let naive_dt = date.and_time(time);
             return Some(naive_dt.and_local_timezone(Local).single()?);
         }
-        
+
         // Try parsing as full datetime (YYYY-MM-DD HH:MM)
         if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(input, "%Y-%m-%d %H:%M") {
             return Some(naive_dt.and_local_timezone(Local).single()?);
         }
-        
+
         // Try parsing as date and time (MM-DD HH:MM) - assumes current year
         if input.len() >= 11 {
             let with_year = format!("{}-{}", Local::now().format("%Y"), input);
@@ -469,7 +590,7 @@ impl App {
                 return Some(naive_dt.and_local_timezone(Local).single()?);
             }
         }
-        
+
         None
     }
 
@@ -477,8 +598,9 @@ impl App {
         match self.input_field {
             InputField::Description => self.input_description.push(c),
             InputField::Tags => self.input_tags.push(c),
+            InputField::StartTime => self.input_start_time.push(c),
+            InputField::EndTime => self.input_end_time.push(c),
             InputField::Duration => self.input_duration.push(c),
-            InputField::Timestamp => self.input_timestamp.push(c),
         }
     }
 
@@ -486,8 +608,9 @@ impl App {
         match self.input_field {
             InputField::Description => { self.input_description.pop(); }
             InputField::Tags => { self.input_tags.pop(); }
+            InputField::StartTime => { self.input_start_time.pop(); }
+            InputField::EndTime => { self.input_end_time.pop(); }
             InputField::Duration => { self.input_duration.pop(); }
-            InputField::Timestamp => { self.input_timestamp.pop(); }
         }
     }
 }
@@ -550,6 +673,7 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Char('h') | KeyCode::Left => app.previous_period(),
                             KeyCode::Char('l') | KeyCode::Right => app.next_period(),
                             KeyCode::Char('t') => app.go_to_today(),
+                            KeyCode::Char('o') => app.toggle_sort_order(),
                             _ => {}
                         },
                         InputMode::AddingEntry => match key.code {
@@ -669,7 +793,7 @@ fn ui(f: &mut Frame, app: &mut App) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme::BORDER))
                 .title(Span::styled(
-                    format!(" {} | {} ", app.view_mode.title(), date_info),
+                    format!(" {} | {} | {} ", app.view_mode.title(), date_info, app.sort_order.label()),
                     Style::default().fg(theme::HIGHLIGHT),
                 )),
         );
@@ -728,6 +852,8 @@ fn ui(f: &mut Frame, app: &mut App) {
         Span::styled(": prev/next | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("t", Style::default().fg(theme::ACCENT)),
         Span::styled(": today | ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("o", Style::default().fg(theme::ACCENT)),
+        Span::styled(": sort order | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("1-3", Style::default().fg(theme::ACCENT)),
         Span::styled(": views | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("j/k", Style::default().fg(theme::ACCENT)),
@@ -877,11 +1003,12 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         .direction(Direction::Vertical)
         .margin(2)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
+            Constraint::Length(3), // Description
+            Constraint::Length(3), // Tags
+            Constraint::Length(3), // Start Time
+            Constraint::Length(3), // End Time
+            Constraint::Length(3), // Duration
+            Constraint::Length(3), // Help
             Constraint::Min(0),
         ])
         .split(area);
@@ -930,7 +1057,51 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         .block(tags_block);
     f.render_widget(tags_input, chunks[1]);
 
-    // Duration input
+    // Start Time input
+    let start_style = if app.input_field == InputField::StartTime {
+        Style::default().fg(theme::ACCENT)
+    } else {
+        Style::default().fg(theme::INACTIVE)
+    };
+    let start_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(start_style)
+        .title(Span::styled(
+            " Start Time (HH:MM or YYYY-MM-DD HH:MM) ",
+            if app.input_field == InputField::StartTime {
+                Style::default().fg(theme::HIGHLIGHT)
+            } else {
+                Style::default().fg(theme::TITLE)
+            },
+        ));
+    let start_input = Paragraph::new(app.input_start_time.as_str())
+        .style(Style::default().fg(Color::White))
+        .block(start_block);
+    f.render_widget(start_input, chunks[2]);
+
+    // End Time input (optional)
+    let end_style = if app.input_field == InputField::EndTime {
+        Style::default().fg(theme::ACCENT)
+    } else {
+        Style::default().fg(theme::INACTIVE)
+    };
+    let end_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(end_style)
+        .title(Span::styled(
+            " End Time (optional: HH:MM or YYYY-MM-DD HH:MM) ",
+            if app.input_field == InputField::EndTime {
+                Style::default().fg(theme::HIGHLIGHT)
+            } else {
+                Style::default().fg(theme::TITLE)
+            },
+        ));
+    let end_input = Paragraph::new(app.input_end_time.as_str())
+        .style(Style::default().fg(Color::White))
+        .block(end_block);
+    f.render_widget(end_input, chunks[3]);
+
+    // Duration input (optional)
     let dur_style = if app.input_field == InputField::Duration {
         Style::default().fg(theme::ACCENT)
     } else {
@@ -940,7 +1111,7 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(dur_style)
         .title(Span::styled(
-            " Duration (e.g., 1h30m, 45m, 2h) ",
+            " Duration (optional: 1h30m, 45m, 2h) ",
             if app.input_field == InputField::Duration {
                 Style::default().fg(theme::HIGHLIGHT)
             } else {
@@ -950,29 +1121,7 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     let dur_input = Paragraph::new(app.input_duration.as_str())
         .style(Style::default().fg(Color::White))
         .block(dur_block);
-    f.render_widget(dur_input, chunks[2]);
-
-    // Timestamp input (optional)
-    let ts_style = if app.input_field == InputField::Timestamp {
-        Style::default().fg(theme::ACCENT)
-    } else {
-        Style::default().fg(theme::INACTIVE)
-    };
-    let ts_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(ts_style)
-        .title(Span::styled(
-            " End Time (optional: HH:MM or YYYY-MM-DD HH:MM, blank=now) ",
-            if app.input_field == InputField::Timestamp {
-                Style::default().fg(theme::HIGHLIGHT)
-            } else {
-                Style::default().fg(theme::TITLE)
-            },
-        ));
-    let ts_input = Paragraph::new(app.input_timestamp.as_str())
-        .style(Style::default().fg(Color::White))
-        .block(ts_block);
-    f.render_widget(ts_input, chunks[3]);
+    f.render_widget(dur_input, chunks[4]);
 
     // Help text
     let help = Paragraph::new(Line::from(vec![
@@ -981,7 +1130,8 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         Span::styled("Enter", Style::default().fg(theme::ACCENT)),
         Span::styled(": save | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("Esc", Style::default().fg(theme::ACCENT)),
-        Span::styled(": cancel", Style::default().fg(theme::INACTIVE)),
+        Span::styled(": cancel  ", Style::default().fg(theme::INACTIVE)),
+        Span::styled("Need ≥2 of: Start, End, Duration", Style::default().fg(theme::BORDER)),
     ]))
     .block(
         Block::default()
@@ -989,7 +1139,7 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
             .border_style(Style::default().fg(theme::BORDER))
             .title(Span::styled(form_title, Style::default().fg(theme::HIGHLIGHT))),
     );
-    f.render_widget(help, chunks[4]);
+    f.render_widget(help, chunks[5]);
 
     // Show cursor in active field
     let (cursor_x, cursor_y) = match app.input_field {
@@ -1001,20 +1151,24 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
             chunks[1].x + app.input_tags.len() as u16 + 1,
             chunks[1].y + 1,
         ),
-        InputField::Duration => (
-            chunks[2].x + app.input_duration.len() as u16 + 1,
+        InputField::StartTime => (
+            chunks[2].x + app.input_start_time.len() as u16 + 1,
             chunks[2].y + 1,
         ),
-        InputField::Timestamp => (
-            chunks[3].x + app.input_timestamp.len() as u16 + 1,
+        InputField::EndTime => (
+            chunks[3].x + app.input_end_time.len() as u16 + 1,
             chunks[3].y + 1,
+        ),
+        InputField::Duration => (
+            chunks[4].x + app.input_duration.len() as u16 + 1,
+            chunks[4].y + 1,
         ),
     };
     f.set_cursor_position((cursor_x, cursor_y));
 }
 
 fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
-    let header_cells = ["Date", "Time", "Description", "Tags", "Duration", ""]
+    let header_cells = ["Date", "Start", "End", "Description", "Tags", "Duration", ""]
         .into_iter()
         .map(|h| {
             Cell::from(h).style(
@@ -1053,11 +1207,17 @@ fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
                 Style::default().bg(Color::Rgb(35, 35, 35))
             };
 
+            let end_str = entry.end_time
+                .map(|t| t.format("%H:%M").to_string())
+                .unwrap_or_else(|| "—".to_string());
+
             Row::new(vec![
                 Cell::from(entry.start_time.format("%Y-%m-%d").to_string())
                     .style(Style::default().fg(theme::TITLE)),
                 Cell::from(entry.start_time.format("%H:%M").to_string())
                     .style(Style::default().fg(theme::ACCENT)),
+                Cell::from(end_str)
+                    .style(Style::default().fg(theme::INACTIVE)),
                 Cell::from(entry.description.clone()),
                 Cell::from(entry.format_tags())
                     .style(Style::default().fg(theme::HIGHLIGHT)),
@@ -1079,10 +1239,11 @@ fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
         rows,
         [
             Constraint::Length(12),
-            Constraint::Length(8),
-            Constraint::Min(15),
-            Constraint::Length(15),
-            Constraint::Length(10),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Min(12),
+            Constraint::Length(14),
+            Constraint::Length(9),
             Constraint::Length(3),
         ],
     )
