@@ -446,6 +446,19 @@ impl App {
         };
     }
 
+    fn prev_input_field(&mut self) {
+        let leaving = self.input_field;
+        self.apply_time_calculations(leaving);
+
+        self.input_field = match self.input_field {
+            InputField::Description => InputField::EndTime,
+            InputField::Tags => InputField::Description,
+            InputField::Duration => InputField::Tags,
+            InputField::StartTime => InputField::Duration,
+            InputField::EndTime => InputField::StartTime,
+        };
+    }
+
     fn submit_entry(&mut self) -> Result<()> {
         if self.input_description.is_empty() {
             return Ok(());
@@ -764,6 +777,7 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Esc => app.cancel_adding(),
                             KeyCode::Enter => app.submit_entry()?,
                             KeyCode::Tab => app.next_input_field(),
+                            KeyCode::BackTab => app.prev_input_field(),
                             KeyCode::Backspace => app.handle_input_backspace(),
                             KeyCode::Char(c) => app.handle_input_char(c),
                             _ => {}
@@ -772,6 +786,7 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Esc => app.cancel_adding(),
                             KeyCode::Enter => app.submit_edit()?,
                             KeyCode::Tab => app.next_input_field(),
+                            KeyCode::BackTab => app.prev_input_field(),
                             KeyCode::Backspace => app.handle_input_backspace(),
                             KeyCode::Char(c) => app.handle_input_char(c),
                             _ => {}
