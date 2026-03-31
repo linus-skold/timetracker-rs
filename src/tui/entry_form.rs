@@ -2,10 +2,18 @@ use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDate};
 use crate::storage::save_data;
 use super::App;
-use super::types::{InputField, InputMode};
+use super::types::{InputField, InputMode, ViewMode};
 
 impl App {
     pub(crate) fn start_adding(&mut self) {
+        // In week view, snap selected_date to the day the cursor is under so
+        // that new entries land on the right day without the user having to
+        // type a date explicitly.
+        if self.view_mode == ViewMode::Week {
+            if let Some(date) = self.date_under_cursor() {
+                self.selected_date = date;
+            }
+        }
         self.input_mode = InputMode::AddingEntry;
         self.input_field = InputField::Description;
         self.input_description.clear();
@@ -321,6 +329,15 @@ impl App {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// Returns the date of the entry currently under the cursor, if any.
+    fn date_under_cursor(&self) -> Option<chrono::NaiveDate> {
+        let filtered = self.filtered_entries();
+        self.table_state
+            .selected()
+            .and_then(|idx| filtered.get(idx))
+            .map(|entry| entry.start_time.date_naive())
+    }
 
     fn parse_tags(&self) -> Vec<String> {
         self.input_tags
