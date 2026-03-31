@@ -1,5 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration, Local, NaiveDate};
+use std::collections::HashMap;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
     execute,
@@ -32,6 +33,7 @@ mod theme {
     pub const DURATION_LOW: Color = Color::Rgb(165, 214, 167);  // Light green
     pub const BORDER: Color = Color::Rgb(88, 88, 88);          // Border gray
     pub const TITLE: Color = Color::Rgb(186, 186, 186);        // Light gray
+    pub const DAY_HEADER_BG: Color = Color::Rgb(38, 48, 68);   // Dark blue for day separators
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1249,6 +1251,76 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     f.set_cursor_position((cursor_x, cursor_y));
 }
 
+fn entry_row(entry: &crate::tracker::TimeEntry, stripe: bool) -> Row<'_> {
+    let hours = entry.duration().num_hours();
+    let dur_color = if hours >= 4 {
+        theme::DURATION_HIGH
+    } else if hours >= 2 {
+        theme::DURATION_MED
+    } else {
+        theme::DURATION_LOW
+    };
+
+    let status_style = if entry.is_active() {
+        Style::default().fg(theme::ACTIVE)
+    } else {
+        Style::default().fg(theme::INACTIVE)
+    };
+
+    let row_style = if stripe {
+        Style::default().bg(Color::Rgb(35, 35, 35))
+    } else {
+        Style::default()
+    };
+
+    let end_str = entry
+        .end_time
+        .map(|t| t.format("%H:%M").to_string())
+        .unwrap_or_else(|| "—".to_string());
+
+    Row::new(vec![
+        Cell::from(entry.start_time.format("%Y-%m-%d").to_string())
+            .style(Style::default().fg(theme::TITLE)),
+        Cell::from(entry.start_time.format("%H:%M").to_string())
+            .style(Style::default().fg(theme::ACCENT)),
+        Cell::from(end_str).style(Style::default().fg(theme::INACTIVE)),
+        Cell::from(entry.description.clone()),
+        Cell::from(entry.format_tags())
+            .style(Style::default().fg(theme::HIGHLIGHT)),
+        Cell::from(entry.format_duration()).style(Style::default().fg(dur_color)),
+        Cell::from(entry.status_icon()).style(status_style),
+    ])
+    .style(row_style)
+}
+
+fn day_header_row(date: NaiveDate, total: Duration) -> Row<'static> {
+    // Prepend a newline so the content sits on the second line of the 2-row cell,
+    // making it feel visually attached to the entries that follow.
+    let weekday = format!("\n{}", date.format("%A"));
+    let date_str = format!("\n{}", date.format("%B %d, %Y"));
+    let total_str = format!("\n{}", duration::format(total));
+
+    Row::new(vec![
+        Cell::from(weekday).style(
+            Style::default()
+                .fg(theme::HIGHLIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from(""),
+        Cell::from(""),
+        Cell::from(date_str).style(Style::default().fg(theme::TITLE)),
+        Cell::from(""),
+        Cell::from(total_str).style(
+            Style::default()
+                .fg(theme::ACCENT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Cell::from(""),
+    ])
+    .height(2)
+    .style(Style::default().bg(theme::DAY_HEADER_BG))
+}
+
 fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
     let header_cells = ["Date", "Start", "End", "Description", "Tags", "Duration", ""]
         .into_iter()
@@ -1264,55 +1336,68 @@ fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
         .style(Style::default().bg(theme::HEADER_BG));
 
     let entries = app.filtered_entries();
-    let rows: Vec<Row> = entries
-        .iter()
-        .enumerate()
-        .map(|(i, entry)| {
-            let hours = entry.duration().num_hours();
-            let dur_color = if hours >= 4 {
-                theme::DURATION_HIGH
-            } else if hours >= 2 {
-                theme::DURATION_MED
-            } else {
-                theme::DURATION_LOW
-            };
 
-            let status_style = if entry.is_active() {
-                Style::default().fg(theme::ACTIVE)
-            } else {
-                Style::default().fg(theme::INACTIVE)
-            };
+    // In Week view, interleave day-separator header rows before each day's entries.
+    // table_state tracks the entry index (not visual row index), so we compute a
+    // separate visual index for the selected entry to pass to the stateful widget.
+    let (rows, visual_selected): (Vec<Row>, Option<usize>) =
+        if app.view_mode == ViewMode::Week {
+            // Sum durations per day from the filtered entries
+            let mut day_totals: HashMap<NaiveDate, Duration> = HashMap::new();
+            for entry in &entries {
+                let date = entry.start_time.date_naive();
+                *day_totals.entry(date).or_insert_with(Duration::zero) += entry.duration();
+            }
 
-            let row_style = if i % 2 == 0 {
-                Style::default()
-            } else {
-                Style::default().bg(Color::Rgb(35, 35, 35))
-            };
+            let mut rows: Vec<Row> = Vec::new();
+            // Maps entry_idx -> visual row index (accounting for inserted day headers)
+            let mut visual_idx_map: Vec<usize> = Vec::with_capacity(entries.len());
+            let mut current_date: Option<NaiveDate> = None;
+            let mut stripe = false;
 
-            let end_str = entry.end_time
-                .map(|t| t.format("%H:%M").to_string())
-                .unwrap_or_else(|| "—".to_string());
+            for entry in entries.iter() {
+                let entry_date = entry.start_time.date_naive();
 
-            Row::new(vec![
-                Cell::from(entry.start_time.format("%Y-%m-%d").to_string())
-                    .style(Style::default().fg(theme::TITLE)),
-                Cell::from(entry.start_time.format("%H:%M").to_string())
-                    .style(Style::default().fg(theme::ACCENT)),
-                Cell::from(end_str)
-                    .style(Style::default().fg(theme::INACTIVE)),
-                Cell::from(entry.description.clone()),
-                Cell::from(entry.format_tags())
-                    .style(Style::default().fg(theme::HIGHLIGHT)),
-                Cell::from(entry.format_duration()).style(Style::default().fg(dur_color)),
-                Cell::from(entry.status_icon()).style(status_style),
-            ])
-            .style(row_style)
-        })
-        .collect();
+                if current_date != Some(entry_date) {
+                    current_date = Some(entry_date);
+                    stripe = false;
+                    let total = day_totals
+                        .get(&entry_date)
+                        .copied()
+                        .unwrap_or_else(Duration::zero);
+                    rows.push(day_header_row(entry_date, total));
+                }
+
+                visual_idx_map.push(rows.len());
+                rows.push(entry_row(entry, stripe));
+                stripe = !stripe;
+            }
+
+            let visual_sel = app
+                .table_state
+                .selected()
+                .and_then(|idx| visual_idx_map.get(idx).copied());
+
+            (rows, visual_sel)
+        } else {
+            let rows = entries
+                .iter()
+                .enumerate()
+                .map(|(i, entry)| entry_row(entry, i % 2 != 0))
+                .collect();
+            (rows, app.table_state.selected())
+        };
 
     // Build title with tag filter info
     let title = if app.is_tag_filtering() {
-        format!(" Entries [filtered: {}] ", app.tag_filter.iter().map(|t| format!("#{}", t)).collect::<Vec<_>>().join(" "))
+        format!(
+            " Entries [filtered: {}] ",
+            app.tag_filter
+                .iter()
+                .map(|t| format!("#{}", t))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
     } else {
         " Entries ".to_string()
     };
@@ -1339,5 +1424,8 @@ fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
     .row_highlight_style(Style::default().bg(theme::SELECTED_BG))
     .highlight_symbol(">> ");
 
-    f.render_stateful_widget(table, area, &mut app.table_state);
+    // Use a temporary render state so that table_state continues to track the
+    // entry index (not the visual row index which includes day header rows).
+    let mut render_state = TableState::default().with_selected(visual_selected);
+    f.render_stateful_widget(table, area, &mut render_state);
 }
