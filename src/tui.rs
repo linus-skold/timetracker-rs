@@ -437,10 +437,10 @@ impl App {
 
         self.input_field = match self.input_field {
             InputField::Description => InputField::Tags,
-            InputField::Tags => InputField::StartTime,
+            InputField::Tags => InputField::Duration,
+            InputField::Duration => InputField::StartTime,
             InputField::StartTime => InputField::EndTime,
-            InputField::EndTime => InputField::Duration,
-            InputField::Duration => InputField::Description,
+            InputField::EndTime => InputField::Description,
         };
     }
 
@@ -567,31 +567,113 @@ impl App {
     }
 
     fn parse_time_str(&self, input: &str) -> Option<DateTime<Local>> {
-        use chrono::NaiveTime;
+        use chrono::Datelike;
 
         let input = input.trim();
+        let current_year = Local::now().year();
 
-        // Try parsing as time only (HH:MM) - assumes selected date
-        if let Ok(time) = NaiveTime::parse_from_str(input, "%H:%M") {
-            let date = self.selected_date;
-            let naive_dt = date.and_time(time);
-            return Some(naive_dt.and_local_timezone(Local).single()?);
+        // Check whether the input starts with a date prefix (DD/MM, MM-DD, or YYYY-MM-DD).
+        // A date prefix is recognised when it is followed by a space and a time component.
+        let (naive_date, time_input) = if let Some(space_idx) = input.find(' ') {
+            let date_part = &input[..space_idx];
+            let time_part = input[space_idx + 1..].trim();
+            match Self::parse_date_part(date_part, current_year) {
+                Some(d) => (Some(d), time_part),
+                None => (Some(self.selected_date), input),
+            }
+        } else {
+            (Some(self.selected_date), input)
+        };
+
+        let date = naive_date?;
+        let time = Self::parse_time_part(time_input)?;
+        date.and_time(time).and_local_timezone(Local).single()
+    }
+
+    /// Parse a date-only string into a `NaiveDate`, assuming `current_year` when the year is
+    /// absent. Supported formats: `DD/MM`, `MM-DD`, `YYYY-MM-DD`.
+    fn parse_date_part(s: &str, current_year: i32) -> Option<chrono::NaiveDate> {
+        use chrono::NaiveDate;
+
+        // DD/MM
+        if s.contains('/') {
+            let mut parts = s.splitn(2, '/');
+            if let (Some(d), Some(m)) = (parts.next(), parts.next()) {
+                if let (Ok(day), Ok(month)) = (d.parse::<u32>(), m.parse::<u32>()) {
+                    return NaiveDate::from_ymd_opt(current_year, month, day);
+                }
+            }
         }
 
-        // Try parsing as full datetime (YYYY-MM-DD HH:MM)
-        if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(input, "%Y-%m-%d %H:%M") {
-            return Some(naive_dt.and_local_timezone(Local).single()?);
+        // YYYY-MM-DD
+        if let Ok(nd) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            return Some(nd);
         }
 
-        // Try parsing as date and time (MM-DD HH:MM) - assumes current year
-        if input.len() >= 11 {
-            let with_year = format!("{}-{}", Local::now().format("%Y"), input);
-            if let Ok(naive_dt) = chrono::NaiveDateTime::parse_from_str(&with_year, "%Y-%m-%d %H:%M") {
-                return Some(naive_dt.and_local_timezone(Local).single()?);
+        // MM-DD (current year assumed)
+        if s.len() == 5 && s.contains('-') {
+            let with_year = format!("{}-{}", current_year, s);
+            if let Ok(nd) = NaiveDate::parse_from_str(&with_year, "%Y-%m-%d") {
+                return Some(nd);
             }
         }
 
         None
+    }
+
+    /// Parse a time string into a `NaiveTime`.
+    ///
+    /// Supported formats:
+    /// - `HH:MM` / `H:MM`          – 24-hour with colon separator
+    /// - `HH.MM` / `H.MM`          – 24-hour with dot separator
+    /// - `HH` / `H`                – hour only (minutes default to 00)
+    /// - All of the above with an `am`/`pm` suffix for 12-hour clock
+    ///   e.g. `9am`, `9.30am`, `9:30pm`, `11.45 pm`
+    fn parse_time_part(s: &str) -> Option<chrono::NaiveTime> {
+        use chrono::NaiveTime;
+
+        let s = s.trim().to_lowercase();
+
+        // Detect and strip am/pm suffix (allow optional space before it)
+        let (is_12h, is_pm, rest) = if s.ends_with("pm") {
+            (true, true, s[..s.len() - 2].trim().to_string())
+        } else if s.ends_with("am") {
+            (true, false, s[..s.len() - 2].trim().to_string())
+        } else {
+            (false, false, s.clone())
+        };
+
+        // Normalise dot separator → colon so we only need one parsing path
+        let rest = rest.replace('.', ":");
+
+        let (hour, minute) = if let Some(colon_pos) = rest.find(':') {
+            let h: u32 = rest[..colon_pos].trim().parse().ok()?;
+            let m: u32 = rest[colon_pos + 1..].trim().parse().ok()?;
+            if m > 59 {
+                return None;
+            }
+            (h, m)
+        } else {
+            let h: u32 = rest.trim().parse().ok()?;
+            (h, 0)
+        };
+
+        // Convert 12-hour to 24-hour
+        let hour_24 = if is_12h {
+            if hour == 0 || hour > 12 {
+                return None; // 0 and 13-23 are invalid in 12-hour notation
+            }
+            match (is_pm, hour) {
+                (false, 12) => 0,        // 12 am = midnight
+                (true, 12) => 12,        // 12 pm = noon
+                (false, h) => h,         // 1 am – 11 am
+                (true, h) => h + 12,     // 1 pm – 11 pm
+            }
+        } else {
+            hour
+        };
+
+        NaiveTime::from_hms_opt(hour_24, minute, 0)
     }
 
     fn handle_input_char(&mut self, c: char) {
@@ -1005,9 +1087,9 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         .constraints([
             Constraint::Length(3), // Description
             Constraint::Length(3), // Tags
+            Constraint::Length(3), // Duration
             Constraint::Length(3), // Start Time
             Constraint::Length(3), // End Time
-            Constraint::Length(3), // Duration
             Constraint::Length(3), // Help
             Constraint::Min(0),
         ])
@@ -1057,50 +1139,6 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         .block(tags_block);
     f.render_widget(tags_input, chunks[1]);
 
-    // Start Time input
-    let start_style = if app.input_field == InputField::StartTime {
-        Style::default().fg(theme::ACCENT)
-    } else {
-        Style::default().fg(theme::INACTIVE)
-    };
-    let start_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(start_style)
-        .title(Span::styled(
-            " Start Time (HH:MM or YYYY-MM-DD HH:MM) ",
-            if app.input_field == InputField::StartTime {
-                Style::default().fg(theme::HIGHLIGHT)
-            } else {
-                Style::default().fg(theme::TITLE)
-            },
-        ));
-    let start_input = Paragraph::new(app.input_start_time.as_str())
-        .style(Style::default().fg(Color::White))
-        .block(start_block);
-    f.render_widget(start_input, chunks[2]);
-
-    // End Time input (optional)
-    let end_style = if app.input_field == InputField::EndTime {
-        Style::default().fg(theme::ACCENT)
-    } else {
-        Style::default().fg(theme::INACTIVE)
-    };
-    let end_block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(end_style)
-        .title(Span::styled(
-            " End Time (optional: HH:MM or YYYY-MM-DD HH:MM) ",
-            if app.input_field == InputField::EndTime {
-                Style::default().fg(theme::HIGHLIGHT)
-            } else {
-                Style::default().fg(theme::TITLE)
-            },
-        ));
-    let end_input = Paragraph::new(app.input_end_time.as_str())
-        .style(Style::default().fg(Color::White))
-        .block(end_block);
-    f.render_widget(end_input, chunks[3]);
-
     // Duration input (optional)
     let dur_style = if app.input_field == InputField::Duration {
         Style::default().fg(theme::ACCENT)
@@ -1121,7 +1159,51 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     let dur_input = Paragraph::new(app.input_duration.as_str())
         .style(Style::default().fg(Color::White))
         .block(dur_block);
-    f.render_widget(dur_input, chunks[4]);
+    f.render_widget(dur_input, chunks[2]);
+
+    // Start Time input
+    let start_style = if app.input_field == InputField::StartTime {
+        Style::default().fg(theme::ACCENT)
+    } else {
+        Style::default().fg(theme::INACTIVE)
+    };
+    let start_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(start_style)
+        .title(Span::styled(
+            " Start Time (e.g. 9am, 14:30, 25/03 9.30am) ",
+            if app.input_field == InputField::StartTime {
+                Style::default().fg(theme::HIGHLIGHT)
+            } else {
+                Style::default().fg(theme::TITLE)
+            },
+        ));
+    let start_input = Paragraph::new(app.input_start_time.as_str())
+        .style(Style::default().fg(Color::White))
+        .block(start_block);
+    f.render_widget(start_input, chunks[3]);
+
+    // End Time input (optional)
+    let end_style = if app.input_field == InputField::EndTime {
+        Style::default().fg(theme::ACCENT)
+    } else {
+        Style::default().fg(theme::INACTIVE)
+    };
+    let end_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(end_style)
+        .title(Span::styled(
+            " End Time (optional: e.g. 9am, 14:30, 25/03 9.30am) ",
+            if app.input_field == InputField::EndTime {
+                Style::default().fg(theme::HIGHLIGHT)
+            } else {
+                Style::default().fg(theme::TITLE)
+            },
+        ));
+    let end_input = Paragraph::new(app.input_end_time.as_str())
+        .style(Style::default().fg(Color::White))
+        .block(end_block);
+    f.render_widget(end_input, chunks[4]);
 
     // Help text
     let help = Paragraph::new(Line::from(vec![
@@ -1151,16 +1233,16 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
             chunks[1].x + app.input_tags.len() as u16 + 1,
             chunks[1].y + 1,
         ),
-        InputField::StartTime => (
-            chunks[2].x + app.input_start_time.len() as u16 + 1,
+        InputField::Duration => (
+            chunks[2].x + app.input_duration.len() as u16 + 1,
             chunks[2].y + 1,
         ),
-        InputField::EndTime => (
-            chunks[3].x + app.input_end_time.len() as u16 + 1,
+        InputField::StartTime => (
+            chunks[3].x + app.input_start_time.len() as u16 + 1,
             chunks[3].y + 1,
         ),
-        InputField::Duration => (
-            chunks[4].x + app.input_duration.len() as u16 + 1,
+        InputField::EndTime => (
+            chunks[4].x + app.input_end_time.len() as u16 + 1,
             chunks[4].y + 1,
         ),
     };
