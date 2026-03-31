@@ -59,6 +59,7 @@ enum InputMode {
     AddingEntry,
     EditingEntry,
     Searching,
+    Help,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -779,6 +780,7 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Char('l') | KeyCode::Right => app.next_period(),
                             KeyCode::Char('t') => app.go_to_today(),
                             KeyCode::Char('o') => app.toggle_sort_order(),
+                            KeyCode::Char('?') => app.input_mode = InputMode::Help,
                             _ => {}
                         },
                         InputMode::AddingEntry => match key.code {
@@ -804,6 +806,12 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Enter => app.confirm_search(),
                             KeyCode::Backspace => app.handle_search_backspace(),
                             KeyCode::Char(c) => app.handle_search_char(c),
+                            _ => {}
+                        },
+                        InputMode::Help => match key.code {
+                            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => {
+                                app.input_mode = InputMode::Normal;
+                            }
                             _ => {}
                         },
                     }
@@ -951,24 +959,33 @@ fn ui(f: &mut Frame, app: &mut App) {
     };
 
     let total_str = duration::format(total);
-    let footer = Paragraph::new(Line::from(vec![
+
+    // Render the border block first, then split its inner area so the
+    // right-hand "? : help" hint is always visible regardless of width.
+    let footer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::BORDER));
+    let footer_inner = footer_block.inner(chunks[footer_idx]);
+    f.render_widget(footer_block, chunks[footer_idx]);
+
+    // "? : help" occupies a fixed width on the right (always visible).
+    // " | ?: help " = 11 chars
+    const HELP_WIDTH: u16 = 11;
+    let hints_width = footer_inner.width.saturating_sub(HELP_WIDTH);
+
+    let footer_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(hints_width), Constraint::Length(HELP_WIDTH)])
+        .split(footer_inner);
+
+    let hints = Paragraph::new(Line::from(vec![
         Span::styled(format!(" {}", total_label), Style::default().fg(theme::TITLE)),
         Span::styled(total_str, Style::default().fg(theme::HIGHLIGHT).bold()),
         Span::styled(" | ", Style::default().fg(theme::BORDER)),
-        Span::styled("h/l", Style::default().fg(theme::ACCENT)),
-        Span::styled(": prev/next | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("t", Style::default().fg(theme::ACCENT)),
         Span::styled(": today | ", Style::default().fg(theme::INACTIVE)),
-        Span::styled("o", Style::default().fg(theme::ACCENT)),
-        Span::styled(": sort order | ", Style::default().fg(theme::INACTIVE)),
-        Span::styled("1-3", Style::default().fg(theme::ACCENT)),
-        Span::styled(": views | ", Style::default().fg(theme::INACTIVE)),
-        Span::styled("j/k", Style::default().fg(theme::ACCENT)),
-        Span::styled(": nav | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("/", Style::default().fg(theme::ACCENT)),
         Span::styled(": search | ", Style::default().fg(theme::INACTIVE)),
-        Span::styled("f", Style::default().fg(theme::ACCENT)),
-        Span::styled(": filter tags | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("a", Style::default().fg(theme::ACCENT)),
         Span::styled(": add | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("e", Style::default().fg(theme::ACCENT)),
@@ -976,16 +993,87 @@ fn ui(f: &mut Frame, app: &mut App) {
         Span::styled("d", Style::default().fg(theme::ACCENT)),
         Span::styled(": del | ", Style::default().fg(theme::INACTIVE)),
         Span::styled("s", Style::default().fg(theme::ACCENT)),
-        Span::styled(": stop | ", Style::default().fg(theme::INACTIVE)),
-        Span::styled("q", Style::default().fg(theme::ACCENT)),
-        Span::styled(": quit ", Style::default().fg(theme::INACTIVE)),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::BORDER)),
-    );
-    f.render_widget(footer, chunks[footer_idx]);
+        Span::styled(": stop", Style::default().fg(theme::INACTIVE)),
+    ]));
+    f.render_widget(hints, footer_chunks[0]);
+
+    let help_hint = Paragraph::new(Line::from(vec![
+        Span::styled(" | ", Style::default().fg(theme::BORDER)),
+        Span::styled("?", Style::default().fg(theme::ACCENT)),
+        Span::styled(": help", Style::default().fg(theme::INACTIVE)),
+    ]));
+    f.render_widget(help_hint, footer_chunks[1]);
+
+    // Help popup rendered on top of everything else
+    if app.input_mode == InputMode::Help {
+        render_help_popup(f);
+    }
+}
+
+fn render_help_popup(f: &mut Frame) {
+    // Dim the background by rendering a semi-transparent overlay block
+    let area = f.area();
+    let popup_width = 52u16.min(area.width.saturating_sub(4));
+    let popup_height = 26u16.min(area.height.saturating_sub(4));
+    let popup_area = Rect {
+        x: (area.width.saturating_sub(popup_width)) / 2,
+        y: (area.height.saturating_sub(popup_height)) / 2,
+        width: popup_width,
+        height: popup_height,
+    };
+
+    // Clear the background behind the popup
+    f.render_widget(ratatui::widgets::Clear, popup_area);
+
+    fn key(k: &'static str) -> Span<'static> {
+        Span::styled(k, Style::default().fg(theme::ACCENT).bold())
+    }
+    fn sep(s: &'static str) -> Span<'static> {
+        Span::styled(s, Style::default().fg(theme::INACTIVE))
+    }
+    fn heading(s: &'static str) -> Line<'static> {
+        Line::from(Span::styled(s, Style::default().fg(theme::HIGHLIGHT).bold()))
+    }
+
+    let lines: Vec<Line> = vec![
+        heading("  Navigation"),
+        Line::from(vec![key("  h / ←"), sep("  previous period")]),
+        Line::from(vec![key("  l / →"), sep("  next period")]),
+        Line::from(vec![key("  j / ↓"), sep("  select next entry")]),
+        Line::from(vec![key("  k / ↑"), sep("  select previous entry")]),
+        Line::from(vec![key("  t"), sep("        go to today")]),
+        Line::from(vec![key("  1 / 2 / 3"), sep("  day / week / all view")]),
+        Line::from(Span::raw("")),
+        heading("  Entries"),
+        Line::from(vec![key("  a"), sep("        add entry (uses browsed date)")]),
+        Line::from(vec![key("  e"), sep("        edit selected entry")]),
+        Line::from(vec![key("  d"), sep("        delete selected entry")]),
+        Line::from(vec![key("  s"), sep("        stop active entry")]),
+        Line::from(Span::raw("")),
+        heading("  Search & Filter"),
+        Line::from(vec![key("  /"), sep("        search entries")]),
+        Line::from(vec![key("  f"), sep("        filter by selected tags")]),
+        Line::from(Span::raw("")),
+        heading("  Other"),
+        Line::from(vec![key("  o"), sep("        toggle sort order")]),
+        Line::from(vec![key("  r"), sep("        reload data from disk")]),
+        Line::from(vec![key("  ?"), sep("        toggle this help")]),
+        Line::from(vec![key("  q / Esc"), sep("  quit")]),
+    ];
+
+    let popup = Paragraph::new(lines)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme::ACCENT))
+                .title(Span::styled(
+                    " Keybindings ",
+                    Style::default().fg(theme::HIGHLIGHT).bold(),
+                )),
+        )
+        .style(Style::default().bg(Color::Rgb(28, 28, 28)));
+
+    f.render_widget(popup, popup_area);
 }
 
 fn render_weekly_breakdown(f: &mut Frame, app: &App, area: Rect) {
