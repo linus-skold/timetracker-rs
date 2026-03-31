@@ -1088,7 +1088,7 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     // Show cursor if actively searching
     if is_active {
         f.set_cursor_position((
-            area.x + app.search_term.len() as u16 + 1,
+            area.x + Line::from(app.search_term.as_str()).width() as u16 + 1,
             area.y + 1,
         ));
     }
@@ -1240,26 +1240,29 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     );
     f.render_widget(help, chunks[5]);
 
-    // Show cursor in active field
+    // Show cursor in active field.
+    // Use Line::width() instead of str::len() so that multi-byte Unicode characters
+    // (e.g. accented letters) are measured by their terminal display width (columns),
+    // not their byte length, preventing cursor drift.
     let (cursor_x, cursor_y) = match app.input_field {
         InputField::Description => (
-            chunks[0].x + app.input_description.len() as u16 + 1,
+            chunks[0].x + Line::from(app.input_description.as_str()).width() as u16 + 1,
             chunks[0].y + 1,
         ),
         InputField::Tags => (
-            chunks[1].x + app.input_tags.len() as u16 + 1,
+            chunks[1].x + Line::from(app.input_tags.as_str()).width() as u16 + 1,
             chunks[1].y + 1,
         ),
         InputField::Duration => (
-            chunks[2].x + app.input_duration.len() as u16 + 1,
+            chunks[2].x + Line::from(app.input_duration.as_str()).width() as u16 + 1,
             chunks[2].y + 1,
         ),
         InputField::StartTime => (
-            chunks[3].x + app.input_start_time.len() as u16 + 1,
+            chunks[3].x + Line::from(app.input_start_time.as_str()).width() as u16 + 1,
             chunks[3].y + 1,
         ),
         InputField::EndTime => (
-            chunks[4].x + app.input_end_time.len() as u16 + 1,
+            chunks[4].x + Line::from(app.input_end_time.as_str()).width() as u16 + 1,
             chunks[4].y + 1,
         ),
     };
