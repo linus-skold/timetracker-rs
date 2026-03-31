@@ -516,8 +516,16 @@ impl App {
             (Some(s), Some(e), None) => Some((s, Some(e))),
             (None, Some(e), Some(d)) => Some((e - d, Some(e))),
             (None, None, Some(d)) => {
-                let now = Local::now();
-                Some((now - d, Some(now)))
+                // Anchor to selected_date at current wall-clock time so that
+                // duration-only entries added while browsing a past day land
+                // on that day rather than today.
+                let now_time = Local::now().time();
+                let end = self.selected_date
+                    .and_time(now_time)
+                    .and_local_timezone(Local)
+                    .single()
+                    .unwrap_or_else(Local::now);
+                Some((end - d, Some(end)))
             }
             (Some(s), None, None) => Some((s, None)),
             _ => None,
@@ -1096,7 +1104,16 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
 
 fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     let is_editing = app.input_mode == InputMode::EditingEntry;
-    let form_title = if is_editing { " Edit Entry " } else { " Add Log Entry " };
+    let form_title = if is_editing {
+        " Edit Entry ".to_string()
+    } else {
+        let today = Local::now().date_naive();
+        if app.selected_date == today {
+            " Add Log Entry ".to_string()
+        } else {
+            format!(" Add Log Entry — {} ", app.selected_date.format("%a, %d %b %Y"))
+        }
+    };
     
     let chunks = Layout::default()
         .direction(Direction::Vertical)
