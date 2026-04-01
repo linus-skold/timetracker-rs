@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::{Local, NaiveDate};
 use std::io::{self, Stdout};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -36,6 +36,8 @@ pub(crate) struct App {
     pub(crate) tag_filter: Vec<String>,
     pub(crate) editing_entry_id: Option<u64>,
     pub(crate) sort_order: SortOrder,
+    /// Cursor position within the currently active input field (char index, not byte index).
+    pub(crate) cursor_pos: usize,
 }
 
 impl App {
@@ -57,6 +59,7 @@ impl App {
             tag_filter: Vec::new(),
             editing_entry_id: None,
             sort_order: SortOrder::NewestFirst,
+            cursor_pos: 0,
         })
     }
 }
@@ -127,6 +130,20 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Tab => app.next_input_field(),
                             KeyCode::BackTab => app.prev_input_field(),
                             KeyCode::Backspace => app.handle_input_backspace(),
+                            KeyCode::Left => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    app.move_cursor_word_left();
+                                } else {
+                                    app.move_cursor_left();
+                                }
+                            }
+                            KeyCode::Right => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    app.move_cursor_word_right();
+                                } else {
+                                    app.move_cursor_right();
+                                }
+                            }
                             KeyCode::Char(c) => app.handle_input_char(c),
                             _ => {}
                         },
@@ -136,6 +153,20 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Tab => app.next_input_field(),
                             KeyCode::BackTab => app.prev_input_field(),
                             KeyCode::Backspace => app.handle_input_backspace(),
+                            KeyCode::Left => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    app.move_cursor_word_left();
+                                } else {
+                                    app.move_cursor_left();
+                                }
+                            }
+                            KeyCode::Right => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    app.move_cursor_word_right();
+                                } else {
+                                    app.move_cursor_right();
+                                }
+                            }
                             KeyCode::Char(c) => app.handle_input_char(c),
                             _ => {}
                         },
@@ -143,6 +174,20 @@ pub fn run_tui() -> Result<()> {
                             KeyCode::Esc => app.clear_search(),
                             KeyCode::Enter => app.confirm_search(),
                             KeyCode::Backspace => app.handle_search_backspace(),
+                            KeyCode::Left => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    app.move_cursor_word_left();
+                                } else {
+                                    app.move_cursor_left();
+                                }
+                            }
+                            KeyCode::Right => {
+                                if key.modifiers.contains(KeyModifiers::CONTROL) {
+                                    app.move_cursor_word_right();
+                                } else {
+                                    app.move_cursor_right();
+                                }
+                            }
                             KeyCode::Char(c) => app.handle_search_char(c),
                             _ => {}
                         },

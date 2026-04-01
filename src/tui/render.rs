@@ -278,8 +278,9 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(search_input, area);
 
     if is_active {
+        let byte_idx = app.search_term.char_indices().nth(app.cursor_pos).map(|(i, _)| i).unwrap_or(app.search_term.len());
         f.set_cursor_position((
-            area.x + Line::from(app.search_term.as_str()).width() as u16 + 1,
+            area.x + Line::from(&app.search_term[..byte_idx]).width() as u16 + 1,
             area.y + 1,
         ));
     }
@@ -380,26 +381,30 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     );
     f.render_widget(help, chunks[5]);
 
-    // Cursor: use Line::width() for correct Unicode display-column measurement
+    // Cursor: use cursor_pos for correct mid-text cursor placement
+    let cursor_text_width = |text: &str, pos: usize| -> u16 {
+        let byte_idx = text.char_indices().nth(pos).map(|(i, _)| i).unwrap_or(text.len());
+        Line::from(&text[..byte_idx]).width() as u16
+    };
     let (cursor_x, cursor_y) = match app.input_field {
         InputField::Description => (
-            chunks[0].x + Line::from(app.input_description.as_str()).width() as u16 + 1,
+            chunks[0].x + cursor_text_width(&app.input_description, app.cursor_pos) + 1,
             chunks[0].y + 1,
         ),
         InputField::Tags => (
-            chunks[1].x + Line::from(app.input_tags.as_str()).width() as u16 + 1,
+            chunks[1].x + cursor_text_width(&app.input_tags, app.cursor_pos) + 1,
             chunks[1].y + 1,
         ),
         InputField::Duration => (
-            chunks[2].x + Line::from(app.input_duration.as_str()).width() as u16 + 1,
+            chunks[2].x + cursor_text_width(&app.input_duration, app.cursor_pos) + 1,
             chunks[2].y + 1,
         ),
         InputField::StartTime => (
-            chunks[3].x + Line::from(app.input_start_time.as_str()).width() as u16 + 1,
+            chunks[3].x + cursor_text_width(&app.input_start_time, app.cursor_pos) + 1,
             chunks[3].y + 1,
         ),
         InputField::EndTime => (
-            chunks[4].x + Line::from(app.input_end_time.as_str()).width() as u16 + 1,
+            chunks[4].x + cursor_text_width(&app.input_end_time, app.cursor_pos) + 1,
             chunks[4].y + 1,
         ),
     };

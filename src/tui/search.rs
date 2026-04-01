@@ -94,21 +94,32 @@ impl App {
 
     pub(crate) fn start_search(&mut self) {
         self.input_mode = InputMode::Searching;
+        self.cursor_pos = self.search_term.chars().count();
     }
 
     pub(crate) fn clear_search(&mut self) {
         self.search_term.clear();
         self.input_mode = InputMode::Normal;
+        self.cursor_pos = 0;
         self.table_state.select(Some(0));
     }
 
     pub(crate) fn handle_search_char(&mut self, c: char) {
-        self.search_term.push(c);
+        let pos = self.cursor_pos;
+        let byte_idx = self.search_term.char_indices().nth(pos).map(|(i, _)| i).unwrap_or(self.search_term.len());
+        self.search_term.insert(byte_idx, c);
+        self.cursor_pos += 1;
         self.table_state.select(Some(0));
     }
 
     pub(crate) fn handle_search_backspace(&mut self) {
-        self.search_term.pop();
+        let pos = self.cursor_pos;
+        let actual_pos = pos.min(self.search_term.chars().count());
+        if actual_pos == 0 { return; }
+        let byte_start = self.search_term.char_indices().nth(actual_pos - 1).map(|(i, _)| i).unwrap_or(self.search_term.len());
+        let byte_end = self.search_term.char_indices().nth(actual_pos).map(|(i, _)| i).unwrap_or(self.search_term.len());
+        self.search_term.drain(byte_start..byte_end);
+        self.cursor_pos = actual_pos - 1;
         self.table_state.select(Some(0));
     }
 

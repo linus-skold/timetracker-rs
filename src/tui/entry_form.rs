@@ -21,6 +21,7 @@ impl App {
         self.input_start_time.clear();
         self.input_end_time.clear();
         self.input_duration.clear();
+        self.cursor_pos = 0;
     }
 
     pub(crate) fn cancel_adding(&mut self) {
@@ -31,6 +32,7 @@ impl App {
         self.input_end_time.clear();
         self.input_duration.clear();
         self.editing_entry_id = None;
+        self.cursor_pos = 0;
     }
 
     pub(crate) fn start_editing(&mut self) {
@@ -59,6 +61,7 @@ impl App {
             self.input_duration = duration.unwrap_or_default();
             self.input_mode = InputMode::EditingEntry;
             self.input_field = InputField::Description;
+            self.cursor_pos = self.input_description.chars().count();
         }
     }
 
@@ -104,6 +107,7 @@ impl App {
             InputField::StartTime => InputField::EndTime,
             InputField::EndTime => InputField::Description,
         };
+        self.cursor_pos = self.active_field_input().chars().count();
     }
 
     pub(crate) fn prev_input_field(&mut self) {
@@ -116,26 +120,103 @@ impl App {
             InputField::StartTime => InputField::Duration,
             InputField::EndTime => InputField::StartTime,
         };
+        self.cursor_pos = self.active_field_input().chars().count();
     }
 
     pub(crate) fn handle_input_char(&mut self, c: char) {
-        match self.input_field {
-            InputField::Description => self.input_description.push(c),
-            InputField::Tags => self.input_tags.push(c),
-            InputField::StartTime => self.input_start_time.push(c),
-            InputField::EndTime => self.input_end_time.push(c),
-            InputField::Duration => self.input_duration.push(c),
-        }
+        let pos = self.cursor_pos;
+        let s = match self.input_field {
+            InputField::Description => &mut self.input_description,
+            InputField::Tags => &mut self.input_tags,
+            InputField::StartTime => &mut self.input_start_time,
+            InputField::EndTime => &mut self.input_end_time,
+            InputField::Duration => &mut self.input_duration,
+        };
+        let byte_idx = s.char_indices().nth(pos).map(|(i, _)| i).unwrap_or(s.len());
+        s.insert(byte_idx, c);
+        self.cursor_pos += 1;
     }
 
     pub(crate) fn handle_input_backspace(&mut self) {
+        let pos = self.cursor_pos;
+        let s = match self.input_field {
+            InputField::Description => &mut self.input_description,
+            InputField::Tags => &mut self.input_tags,
+            InputField::StartTime => &mut self.input_start_time,
+            InputField::EndTime => &mut self.input_end_time,
+            InputField::Duration => &mut self.input_duration,
+        };
+        let actual_pos = pos.min(s.chars().count());
+        if actual_pos == 0 { return; }
+        let byte_start = s.char_indices().nth(actual_pos - 1).map(|(i, _)| i).unwrap_or(s.len());
+        let byte_end = s.char_indices().nth(actual_pos).map(|(i, _)| i).unwrap_or(s.len());
+        s.drain(byte_start..byte_end);
+        self.cursor_pos = actual_pos - 1;
+    }
+
+    // ── Cursor movement ───────────────────────────────────────────────────────
+
+    /// Returns the text of the currently active form field (not search).
+    pub(crate) fn active_field_input(&self) -> &str {
         match self.input_field {
-            InputField::Description => { self.input_description.pop(); }
-            InputField::Tags => { self.input_tags.pop(); }
-            InputField::StartTime => { self.input_start_time.pop(); }
-            InputField::EndTime => { self.input_end_time.pop(); }
-            InputField::Duration => { self.input_duration.pop(); }
+            InputField::Description => &self.input_description,
+            InputField::Tags => &self.input_tags,
+            InputField::StartTime => &self.input_start_time,
+            InputField::EndTime => &self.input_end_time,
+            InputField::Duration => &self.input_duration,
         }
+    }
+
+    /// Returns the text of the active input regardless of mode (form field or search bar).
+    fn active_input(&self) -> &str {
+        match self.input_mode {
+            super::types::InputMode::Searching => &self.search_term,
+            _ => self.active_field_input(),
+        }
+    }
+
+    pub(crate) fn move_cursor_left(&mut self) {
+        let clamped = self.cursor_pos.min(self.active_input().chars().count());
+        self.cursor_pos = clamped.saturating_sub(1);
+    }
+
+    pub(crate) fn move_cursor_right(&mut self) {
+        let len = self.active_input().chars().count();
+        let clamped = self.cursor_pos.min(len);
+        self.cursor_pos = (clamped + 1).min(len);
+    }
+
+    /// Jump left past whitespace/punctuation, then past the preceding word.
+    pub(crate) fn move_cursor_word_left(&mut self) {
+        let input = self.active_input().to_string();
+        let chars: Vec<char> = input.chars().collect();
+        let mut pos = self.cursor_pos.min(chars.len());
+        // Step back past non-alphanumeric chars
+        while pos > 0 && !chars[pos - 1].is_alphanumeric() {
+            pos -= 1;
+        }
+        // Step back past the word
+        while pos > 0 && chars[pos - 1].is_alphanumeric() {
+            pos -= 1;
+        }
+        self.cursor_pos = pos;
+    }
+
+    /// Jump right past the current word, then past any trailing whitespace/punctuation.
+    pub(crate) fn move_cursor_word_right(&mut self) {
+        let input = self.active_input().to_string();
+        let chars: Vec<char> = input.chars().collect();
+        let len = chars.len();
+        let mut pos = self.cursor_pos.min(len);
+        // Step forward past the word
+        while pos < len && chars[pos].is_alphanumeric() {
+            pos += 1;
+        }
+        // Step forward past non-alphanumeric chars
+        while pos < len && !chars[pos].is_alphanumeric() {
+            pos += 1;
+        }
+        self.cursor_pos = pos;
     }
 
     // ── Time resolution ──────────────────────────────────────────────────────
