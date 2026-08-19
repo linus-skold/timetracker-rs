@@ -201,4 +201,11 @@ day_med_hours = 4
 
 [list]
 default_limit = 20     # default for `tt list` when -n isn't passed
+
+[agent]
+max_gap_minutes = 45        # silence between heartbeats that `tt agent end` refuses on
+max_unvouched_minutes = 120 # how long a phase with no heartbeat at all may run
 ```
+
+`TT_MAX_GAP_MINUTES` and `TT_MAX_UNVOUCHED_MINUTES` override the two `[agent]`
+settings for a single invocation.

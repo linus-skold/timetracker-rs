@@ -14,6 +14,7 @@ use chrono::{DateTime, Local};
 use crate::tracker::IdleInterval;
 
 use crate::cli::{self, AgentCommands};
+use crate::config;
 use crate::icons;
 use crate::marks::{self, Begin, Touch};
 
@@ -359,24 +360,34 @@ fn article(minutes: i64) -> &'static str {
 }
 
 /// How long a silence *between heartbeats* has to be to count, in minutes.
-/// `TT_MAX_GAP_MINUTES`, else 45.
+/// `TT_MAX_GAP_MINUTES`, else `agent.max_gap_minutes`, else 45.
 fn max_gap_minutes() -> i64 {
-    minutes("TT_MAX_GAP_MINUTES", 45)
+    minutes(
+        "TT_MAX_GAP_MINUTES",
+        config::load().agent.max_gap_minutes,
+        45,
+    )
 }
 
 /// How long an **unvouched** phase — a mark with no heartbeat at all — may run
-/// before the close is refused. `TT_MAX_UNVOUCHED_MINUTES`, else 120, longer
-/// than the interior-silence threshold.
+/// before the close is refused. `TT_MAX_UNVOUCHED_MINUTES`, else
+/// `agent.max_unvouched_minutes`, else 120, longer than the interior-silence
+/// threshold.
 fn max_unvouched_minutes() -> i64 {
-    minutes("TT_MAX_UNVOUCHED_MINUTES", 120)
+    minutes(
+        "TT_MAX_UNVOUCHED_MINUTES",
+        config::load().agent.max_unvouched_minutes,
+        120,
+    )
 }
 
-/// A minutes-valued setting: the environment wins over the built-in default.
-/// Set-but-empty and unparseable read as unset.
-fn minutes(name: &str, default: i64) -> i64 {
+/// A minutes-valued setting: the environment wins over the config file, which
+/// wins over the built-in default. Set-but-empty and unparseable read as unset.
+fn minutes(name: &str, configured: Option<i64>, default: i64) -> i64 {
     std::env::var(name)
         .ok()
         .and_then(|value| value.parse().ok())
+        .or(configured)
         .unwrap_or(default)
 }
 

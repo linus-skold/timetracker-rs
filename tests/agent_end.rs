@@ -381,6 +381,41 @@ fn a_beaten_phase_is_still_judged_at_the_interior_threshold() {
     ));
 }
 
+/// Both thresholds are settable in `config.toml`, and the environment still wins.
+#[test]
+fn the_thresholds_come_from_the_config_file_unless_the_environment_says_otherwise() {
+    let configured = Case::new("threshold-config");
+    configured.write_config("[agent]\nmax_unvouched_minutes = 30\n");
+    configured.write_mark("proj.7.impl", now() - 60 * 60);
+    let run = configured.run(&["end", "proj", "7", "impl", "an hour of nothing"]);
+    run.assert_status(65);
+    run.assert_stderr_has("60m gap");
+
+    let overridden = Case::new("threshold-config-env");
+    overridden.write_config("[agent]\nmax_unvouched_minutes = 30\n");
+    overridden.write_mark("proj.7.impl", now() - 60 * 60);
+    let run = overridden.run_with_env(
+        &["end", "proj", "7", "impl", "an hour of nothing"],
+        &[("TT_MAX_UNVOUCHED_MINUTES", "90")],
+    );
+    run.assert_status(0);
+    run.assert_stdout_has(&logged_duration(60));
+}
+
+/// A beaten phase reads its threshold from the same file.
+#[test]
+fn the_gap_threshold_comes_from_the_config_file_too() {
+    let case = Case::new("gap-threshold-config");
+    case.write_config("[agent]\nmax_gap_minutes = 10\n");
+    let start = now() - 40 * 60;
+    case.write_mark("proj.7.impl", start);
+    case.beats_at("proj.7.impl", &[start + 5 * 60, start + 25 * 60]);
+
+    let run = case.run(&["end", "proj", "7", "impl", "beat, then quiet"]);
+    run.assert_status(65);
+    run.assert_stderr_has("20m gap");
+}
+
 #[test]
 fn the_unvouched_threshold_is_configurable() {
     let case = Case::new("gaps-unvouched-threshold");

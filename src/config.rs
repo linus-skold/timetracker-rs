@@ -20,6 +20,7 @@ struct RawConfig {
     icons: Option<IconsConfig>,
     duration: Option<DurationConfig>,
     list: Option<ListConfig>,
+    agent: Option<AgentConfig>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -61,6 +62,12 @@ pub struct ListConfig {
     pub default_limit: Option<usize>,
 }
 
+#[derive(Debug, Default, Clone, Deserialize)]
+pub struct AgentConfig {
+    pub max_gap_minutes: Option<i64>,
+    pub max_unvouched_minutes: Option<i64>,
+}
+
 /// Fully-resolved config (after merging any `include` chain).
 #[derive(Debug, Default, Clone)]
 pub struct Config {
@@ -68,6 +75,7 @@ pub struct Config {
     pub icons: IconsConfig,
     pub duration: DurationConfig,
     pub list: ListConfig,
+    pub agent: AgentConfig,
 }
 
 /// Loads the user's config file, if any. Missing file -> defaults. A
@@ -87,6 +95,7 @@ pub fn load() -> Config {
             icons: raw.icons.unwrap_or_default(),
             duration: raw.duration.unwrap_or_default(),
             list: raw.list.unwrap_or_default(),
+            agent: raw.agent.unwrap_or_default(),
         },
         Err(e) => {
             eprintln!("Warning: failed to load config from {}: {e:#}", path.display());
@@ -158,6 +167,7 @@ fn merge_raw(base: RawConfig, overlay: RawConfig) -> RawConfig {
         icons: merge_opt(base.icons, overlay.icons, merge_icons),
         duration: merge_opt(base.duration, overlay.duration, merge_duration),
         list: merge_opt(base.list, overlay.list, merge_list),
+        agent: merge_opt(base.agent, overlay.agent, merge_agent),
     }
 }
 
@@ -210,6 +220,13 @@ fn merge_duration(b: DurationConfig, o: DurationConfig) -> DurationConfig {
 fn merge_list(b: ListConfig, o: ListConfig) -> ListConfig {
     ListConfig {
         default_limit: o.default_limit.or(b.default_limit),
+    }
+}
+
+fn merge_agent(b: AgentConfig, o: AgentConfig) -> AgentConfig {
+    AgentConfig {
+        max_gap_minutes: o.max_gap_minutes.or(b.max_gap_minutes),
+        max_unvouched_minutes: o.max_unvouched_minutes.or(b.max_unvouched_minutes),
     }
 }
 
