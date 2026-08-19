@@ -45,6 +45,7 @@ pub struct IconsConfig {
     pub warning: Option<String>,
     pub calendar: Option<String>,
     pub list: Option<String>,
+    pub agent: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -193,6 +194,7 @@ fn merge_icons(b: IconsConfig, o: IconsConfig) -> IconsConfig {
         warning: o.warning.or(b.warning),
         calendar: o.calendar.or(b.calendar),
         list: o.list.or(b.list),
+        agent: o.agent.or(b.agent),
     }
 }
 

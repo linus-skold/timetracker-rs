@@ -69,6 +69,87 @@ pub enum Commands {
     Status,
     /// true/false if something is active
     Active,
+    /// Phase marks for the agent layer
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommands,
+    },
+}
+
+/// The agent layer's commands. Most touch mark files only; the ones that log an
+/// entry say so through [`AgentCommands::touches_store`].
+#[derive(Subcommand)]
+pub enum AgentCommands {
+    /// Open a mark for a phase, keeping the start of one already open
+    Begin {
+        project: String,
+        /// Issue number, or `-` for a phase with no issue
+        issue: String,
+        phase: String,
+    },
+    /// Record one heartbeat for an open phase
+    Touch {
+        project: String,
+        /// Issue number, or `-` for a phase with no issue
+        issue: String,
+        phase: String,
+    },
+    /// Drop a phase's mark and heartbeats without logging anything
+    Cancel {
+        project: String,
+        /// Issue number, or `-` for a phase with no issue
+        issue: String,
+        phase: String,
+    },
+    /// List every open mark
+    List,
+    /// Log one finished piece of work, with no mark involved
+    Item {
+        project: String,
+        /// Issue number, or `-` for a phase with no issue
+        issue: String,
+        phase: String,
+        /// 3-6 words of plain prose, with no issue number in them
+        summary: Option<String>,
+        /// Whole minutes, rounded up to the nearest quarter hour
+        minutes: Option<String>,
+    },
+    /// Close a marked phase, measuring it to its last heartbeat
+    End {
+        project: String,
+        /// Issue number, or `-` for a phase with no issue
+        issue: String,
+        phase: String,
+        /// 3-6 words of plain prose, with no issue number in them
+        summary: Option<String>,
+        /// Whole minutes, overriding the mark's own timestamps entirely — and
+        /// winning over both flags below
+        minutes: Option<String>,
+        /// Log the whole measured span, recording the flagged silence without
+        /// removing it
+        #[arg(long, conflicts_with = "trim")]
+        full: bool,
+        /// Log the measured span minus every flagged gap, splitting the entry at
+        /// each one
+        #[arg(long)]
+        trim: bool,
+    },
+}
+
+impl AgentCommands {
+    /// Whether this subcommand creates or reads a `tt` entry, which decides
+    /// which side of the migrate preamble in `main.rs` it dispatches on.
+    ///
+    /// Exhaustive on purpose: a new subcommand must decide.
+    pub fn touches_store(&self) -> bool {
+        match self {
+            AgentCommands::Begin { .. }
+            | AgentCommands::Touch { .. }
+            | AgentCommands::Cancel { .. }
+            | AgentCommands::List => false,
+            AgentCommands::Item { .. } | AgentCommands::End { .. } => true,
+        }
+    }
 }
 
 /// Parse one `--idle` value: `<start>-<end>` in epoch seconds. A malformed value

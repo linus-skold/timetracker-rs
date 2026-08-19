@@ -11,6 +11,7 @@ struct Icons {
     warning: String,
     calendar: String,
     list: String,
+    agent: String,
 }
 
 impl Icons {
@@ -24,6 +25,7 @@ impl Icons {
             warning: icon(&cfg.warning, "⚠️"),
             calendar: icon(&cfg.calendar, "📅"),
             list: icon(&cfg.list, "📋"),
+            agent: icon(&cfg.agent, "🤖"),
         }
     }
 }
@@ -51,4 +53,7 @@ pub fn calendar() -> &'static str {
 }
 pub fn list() -> &'static str {
     &icons().list
+}
+pub fn agent() -> &'static str {
+    &icons().agent
 }

@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+mod agent;
 mod cli;
 mod config;
 mod duration;
@@ -14,6 +15,16 @@ use clap::Parser;
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Dispatched ahead of the preamble below because it must not take the store
+    // lock; the preamble runs before the dispatch table, not inside it — see
+    // `AgentCommands::touches_store`.
+    match &cli.command {
+        Commands::Agent { command } if !command.touches_store() => {
+            return agent::run(command);
+        }
+        _ => {}
+    }
 
     // Migrate once under the store lock, never in `load_data`: a write from a
     // loader would surprise every read-only path.
@@ -41,5 +52,6 @@ fn main() -> Result<()> {
         Commands::Tui => tui::run_tui(),
         Commands::Status => cli::status(),
         Commands::Active => cli::active(),
+        Commands::Agent { command } => agent::run(&command),
     }
 }
