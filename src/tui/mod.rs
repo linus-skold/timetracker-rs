@@ -325,29 +325,9 @@ mod tests {
     /// Serialises the tests that repoint `HOME` and `TT_MARK_DIR`; env is
     /// process-wide, and `marks`' own env test shares this lock.
     use crate::storage::env_guard;
+    use crate::storage::env_sandbox as sandbox;
     use crate::tracker::TimeEntry;
     use std::path::PathBuf;
-
-    /// Point `HOME` and `TT_MARK_DIR` at a fresh scratch dir. **Tests must never
-    /// touch the real store or marks** — live agent sessions write both.
-    fn sandbox(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tt-store-test-{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        unsafe { std::env::set_var("HOME", &dir) };
-        unsafe { std::env::set_var("TT_MARK_DIR", dir.join("marks")) };
-        let path = storage::get_data_path().unwrap();
-        assert!(
-            path.starts_with(&dir),
-            "sandbox HOME not in effect: {path:?}"
-        );
-        let marks = crate::marks::mark_dir().expect("a mark dir");
-        assert!(
-            marks.starts_with(&dir),
-            "sandbox TT_MARK_DIR not in effect: {marks:?}"
-        );
-        dir
-    }
 
     /// The sandbox's mark directory, created on demand.
     fn mark_sandbox() -> PathBuf {

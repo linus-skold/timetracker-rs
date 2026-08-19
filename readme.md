@@ -209,3 +209,7 @@ max_unvouched_minutes = 120 # how long a phase with no heartbeat at all may run
 
 `TT_MAX_GAP_MINUTES` and `TT_MAX_UNVOUCHED_MINUTES` override the two `[agent]`
 settings for a single invocation.
+
+`TT_DATA_DIR` overrides the directory holding `data.json` and `data.lock`, and
+`TT_CONFIG_FILE` overrides the config file path itself. An empty value for either
+counts as unset, leaving the defaults above in force.

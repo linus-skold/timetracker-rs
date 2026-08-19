@@ -1,8 +1,9 @@
 //! The shared harness for the `tt agent` integration tests.
 //!
-//! Every case runs in a throwaway `HOME` *and* `TT_MARK_DIR`, and [`Case::run`]
-//! refuses a command whose paths are not inside the sandbox. Time is fabricated at
-//! synthetic epochs; expectations are derived from the fixture, never written down.
+//! Every case runs in a throwaway `HOME`, `TT_MARK_DIR`, `TT_DATA_DIR` and
+//! `TT_CONFIG_FILE`, and [`Case::run`] refuses a command whose paths are not inside
+//! the sandbox. Time is fabricated at synthetic epochs; expectations are derived
+//! from the fixture, never written down.
 //!
 //! Each test binary compiles this module separately, so an item only one of them
 //! uses is `dead_code` in the other — hence the crate-level allow.
@@ -14,10 +15,13 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// One case's sandbox: a `HOME`, a mark directory inside it, and nothing else.
+/// One case's sandbox: a `HOME`, a mark directory, a store directory and a config
+/// file beside it, and nothing else.
 pub struct Case {
     pub home: PathBuf,
     pub marks: PathBuf,
+    pub data: PathBuf,
+    pub config: PathBuf,
 }
 
 pub struct Run {
@@ -32,9 +36,17 @@ impl Case {
         let _ = fs::remove_dir_all(&root);
         let home = root.join("home");
         let marks = root.join("marks");
+        let data = root.join("store");
+        let config = root.join("config.toml");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&marks).unwrap();
-        Self { home, marks }
+        fs::create_dir_all(&data).unwrap();
+        Self {
+            home,
+            marks,
+            data,
+            config,
+        }
     }
 
     /// Run `tt agent <args>` with the sandbox in force. `env_clear`, not overrides:
@@ -64,9 +76,12 @@ impl Case {
     }
 
     fn run_full(&self, args: &[&str], mark_dir: bool, env: &[(&str, &str)]) -> Run {
+        let root = self.home.parent().unwrap();
         assert!(
             self.home.starts_with(std::env::temp_dir())
-                && self.marks.starts_with(self.home.parent().unwrap()),
+                && self.marks.starts_with(root)
+                && self.data.starts_with(root)
+                && self.config.starts_with(root),
             "sandbox paths escaped the scratch directory: {:?}",
             self.home
         );
@@ -74,6 +89,8 @@ impl Case {
         let mut command = Command::new(env!("CARGO_BIN_EXE_tt"));
         command.env_clear();
         command.env("HOME", &self.home);
+        command.env("TT_DATA_DIR", &self.data);
+        command.env("TT_CONFIG_FILE", &self.config);
         if mark_dir {
             command.env("TT_MARK_DIR", &self.marks);
         }
@@ -102,11 +119,9 @@ impl Case {
         self.marks.join("beats").join(key)
     }
 
-    /// Write a `config.toml` into the sandbox, at the path `config::load` reads.
+    /// Write the sandbox's `config.toml`, at the path `TT_CONFIG_FILE` names.
     pub fn write_config(&self, body: &str) {
-        let dir = self.home.join(".config/timetracker-rs");
-        fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("config.toml"), body).unwrap();
+        fs::write(&self.config, body).unwrap();
     }
 
     /// Fabricate an open mark started at an absolute epoch.
@@ -168,10 +183,10 @@ impl Case {
         fs::write(dir.join("data.json"), json).unwrap();
     }
 
-    /// The sandbox's store directory — where `data.json` and `data.lock` would land.
+    /// The sandbox's store directory — where `data.json` and `data.lock` land,
+    /// because `TT_DATA_DIR` names it.
     pub fn data_dir(&self) -> PathBuf {
-        self.home
-            .join("Library/Application Support/com.timetracker.tt")
+        self.data.clone()
     }
 
     /// The sandbox's store, parsed back from its own JSON.

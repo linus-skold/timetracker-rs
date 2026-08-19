@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::{
+    ffi::OsString,
     fs::{self, File},
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
@@ -8,11 +9,20 @@ use std::{
 use crate::tracker;
 
 pub fn get_data_path() -> Result<PathBuf> {
-    let proj_dirs = directories::ProjectDirs::from("com", "timetracker", "tt")
+    let default = directories::ProjectDirs::from("com", "timetracker", "tt")
+        .map(|dirs| dirs.data_dir().to_path_buf());
+    let data_dir = resolve_data_dir(std::env::var_os("TT_DATA_DIR"), default)
         .context("Could not determine config directory")?;
-    let data_dir = proj_dirs.data_dir();
-    fs::create_dir_all(data_dir)?;
+    fs::create_dir_all(&data_dir)?;
     Ok(data_dir.join("data.json"))
+}
+
+/// The env-free half of [`get_data_path`], taking the default store directory.
+fn resolve_data_dir(data_dir: Option<OsString>, default: Option<PathBuf>) -> Option<PathBuf> {
+    match data_dir {
+        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
+        _ => default,
+    }
 }
 
 /// A cheap staleness fingerprint of a path — a file or a directory alike.
@@ -115,6 +125,30 @@ pub(crate) fn env_guard() -> std::sync::MutexGuard<'static, ()> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+/// Point `HOME`, `TT_DATA_DIR` and `TT_MARK_DIR` at a fresh scratch directory
+/// named after `name`, and return it. **Tests must never touch the real store or
+/// marks** — live agent sessions write both. Callers hold [`env_guard`].
+#[cfg(test)]
+pub(crate) fn env_sandbox(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("tt-sandbox-{name}"));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    unsafe { std::env::set_var("HOME", &dir) };
+    unsafe { std::env::set_var("TT_DATA_DIR", dir.join("store")) };
+    unsafe { std::env::set_var("TT_MARK_DIR", dir.join("marks")) };
+    let path = get_data_path().unwrap();
+    assert!(
+        path.starts_with(&dir),
+        "sandbox TT_DATA_DIR not in effect: {path:?}"
+    );
+    let marks = crate::marks::mark_dir().expect("a mark dir");
+    assert!(
+        marks.starts_with(&dir),
+        "sandbox TT_MARK_DIR not in effect: {marks:?}"
+    );
+    dir
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +197,23 @@ mod tests {
         assert!(
             !PathStamp::unchanged(None, PathStamp::read(&file)),
             "appearing is a change"
+        );
+    }
+
+    #[test]
+    fn tt_data_dir_replaces_the_default_store_directory() {
+        let default = || Some(PathBuf::from("default"));
+        assert_eq!(resolve_data_dir(None, default()), default());
+        // An empty `TT_DATA_DIR` is no setting at all.
+        assert_eq!(resolve_data_dir(Some("".into()), default()), default());
+        assert_eq!(
+            resolve_data_dir(Some("elsewhere".into()), default()),
+            Some(PathBuf::from("elsewhere"))
+        );
+        assert_eq!(resolve_data_dir(None, None), None, "no default, no store");
+        assert_eq!(
+            resolve_data_dir(Some("elsewhere".into()), None),
+            Some(PathBuf::from("elsewhere"))
         );
     }
 }

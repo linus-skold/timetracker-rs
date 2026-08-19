@@ -475,8 +475,8 @@ mod tests {
     use super::*;
     use crate::storage;
     use crate::storage::env_guard;
+    use crate::storage::env_sandbox as sandbox;
     use clap::Parser;
-    use std::path::PathBuf;
 
     /// `--until` alone is a usage error, not a silently discarded bound.
     #[test]
@@ -521,21 +521,6 @@ mod tests {
             Cli::try_parse_from(["tt", "report", "--project", "vinge", "--json"]).is_ok(),
             "neither belongs to the scope group"
         );
-    }
-
-    /// Point `HOME` at a fresh scratch dir: the real store is live and must never
-    /// be touched by a test.
-    fn sandbox(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("tt-cli-test-{name}"));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        unsafe { std::env::set_var("HOME", &dir) };
-        let path = storage::get_data_path().unwrap();
-        assert!(
-            path.starts_with(&dir),
-            "sandbox HOME not in effect: {path:?}"
-        );
-        dir
     }
 
     fn parse_log(args: &[&str]) -> Commands {

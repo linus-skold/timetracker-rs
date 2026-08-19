@@ -535,27 +535,19 @@ mod tests {
 
     #[test]
     fn the_default_directory_is_marks_inside_the_app_cache_dir() {
-        let cache = || {
-            Some(PathBuf::from(
-                "/sandbox/home/Library/Caches/com.timetracker.tt",
-            ))
-        };
+        let cache = || Some(PathBuf::from("cache"));
         assert_eq!(
             resolve_mark_dir(None, cache()),
-            Some(PathBuf::from(
-                "/sandbox/home/Library/Caches/com.timetracker.tt/marks"
-            ))
+            Some(PathBuf::from("cache").join("marks"))
         );
         // An empty `TT_MARK_DIR` is no setting at all.
         assert_eq!(
             resolve_mark_dir(Some("".into()), cache()),
-            Some(PathBuf::from(
-                "/sandbox/home/Library/Caches/com.timetracker.tt/marks"
-            ))
+            Some(PathBuf::from("cache").join("marks"))
         );
         assert_eq!(
-            resolve_mark_dir(Some("/elsewhere".into()), cache()),
-            Some(PathBuf::from("/elsewhere"))
+            resolve_mark_dir(Some("elsewhere".into()), cache()),
+            Some(PathBuf::from("elsewhere"))
         );
         assert_eq!(
             resolve_mark_dir(None, None),
@@ -564,42 +556,8 @@ mod tests {
         );
         // …but an override alone is enough to run.
         assert_eq!(
-            resolve_mark_dir(Some("/elsewhere".into()), None),
-            Some(PathBuf::from("/elsewhere"))
-        );
-    }
-
-    /// The cache directory follows `HOME`, so sandboxing it redirects the marks.
-    #[test]
-    fn the_cache_directory_follows_home() {
-        let _guard = env_guard();
-        let dir = sandbox("cache-follows-home");
-
-        let restore_home = std::env::var_os("HOME");
-        let restore_marks = std::env::var_os("TT_MARK_DIR");
-        unsafe { std::env::set_var("HOME", &dir) };
-        unsafe { std::env::remove_var("TT_MARK_DIR") };
-        let resolved = mark_dir();
-        let begun = resolved.as_deref().map(|d| begin_in(d, "tt", "54", "impl"));
-        let listed = open_marks();
-        match restore_home {
-            Some(value) => unsafe { std::env::set_var("HOME", value) },
-            None => unsafe { std::env::remove_var("HOME") },
-        }
-        if let Some(value) = restore_marks {
-            unsafe { std::env::set_var("TT_MARK_DIR", value) };
-        }
-
-        let resolved = resolved.expect("a sandboxed HOME resolves a cache dir");
-        assert!(
-            resolved.starts_with(&dir),
-            "the cache dir ignored HOME: {resolved:?}"
-        );
-        assert_eq!(resolved.file_name().unwrap(), "marks");
-        begun.unwrap().unwrap();
-        assert_eq!(
-            labels(&listed),
-            vec![("tt".into(), Some("54".into()), "impl".into())]
+            resolve_mark_dir(Some("elsewhere".into()), None),
+            Some(PathBuf::from("elsewhere"))
         );
     }
 

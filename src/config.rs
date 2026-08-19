@@ -10,6 +10,7 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -104,13 +105,25 @@ pub fn load() -> Config {
     }
 }
 
-#[cfg(windows)]
 fn config_path() -> Option<PathBuf> {
+    resolve_config_path(std::env::var_os("TT_CONFIG_FILE"), default_config_path())
+}
+
+/// The env-free half of [`config_path`], taking the default config file.
+fn resolve_config_path(config_file: Option<OsString>, default: Option<PathBuf>) -> Option<PathBuf> {
+    match config_file {
+        Some(file) if !file.is_empty() => Some(PathBuf::from(file)),
+        _ => default,
+    }
+}
+
+#[cfg(windows)]
+fn default_config_path() -> Option<PathBuf> {
     std::env::var_os("APPDATA").map(|dir| PathBuf::from(dir).join("timetracker-rs").join("config.toml"))
 }
 
 #[cfg(not(windows))]
-fn config_path() -> Option<PathBuf> {
+fn default_config_path() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|base| {
         base.home_dir()
             .join(".config")
@@ -241,4 +254,30 @@ pub fn parse_hex_rgb(s: &str) -> Option<(u8, u8, u8)> {
     let g = u8::from_str_radix(&s[2..4], 16).ok()?;
     let b = u8::from_str_radix(&s[4..6], 16).ok()?;
     Some((r, g, b))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tt_config_file_replaces_the_default_config_file() {
+        let default = || Some(PathBuf::from("default"));
+        assert_eq!(resolve_config_path(None, default()), default());
+        // An empty `TT_CONFIG_FILE` is no setting at all.
+        assert_eq!(resolve_config_path(Some("".into()), default()), default());
+        assert_eq!(
+            resolve_config_path(Some("elsewhere".into()), default()),
+            Some(PathBuf::from("elsewhere"))
+        );
+        assert_eq!(
+            resolve_config_path(None, None),
+            None,
+            "no default, no config file"
+        );
+        assert_eq!(
+            resolve_config_path(Some("elsewhere".into()), None),
+            Some(PathBuf::from("elsewhere"))
+        );
+    }
 }
