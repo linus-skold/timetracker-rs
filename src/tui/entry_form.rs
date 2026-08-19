@@ -1,14 +1,11 @@
 use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDate};
-use crate::storage::save_data;
 use super::App;
 use super::types::{InputField, InputMode, ViewMode};
 
 impl App {
     pub(crate) fn start_adding(&mut self) {
-        // In week view, snap selected_date to the day the cursor is under so
-        // that new entries land on the right day without the user having to
-        // type a date explicitly.
+        // In week view, snap selected_date to the day under the cursor.
         if self.view_mode == ViewMode::Week {
             if let Some(date) = self.date_under_cursor() {
                 self.selected_date = date;
@@ -17,6 +14,7 @@ impl App {
         self.input_mode = InputMode::AddingEntry;
         self.input_field = InputField::Description;
         self.input_description.clear();
+        self.input_project.clear();
         self.input_tags.clear();
         self.input_start_time.clear();
         self.input_end_time.clear();
@@ -27,6 +25,7 @@ impl App {
     pub(crate) fn cancel_adding(&mut self) {
         self.input_mode = InputMode::Normal;
         self.input_description.clear();
+        self.input_project.clear();
         self.input_tags.clear();
         self.input_start_time.clear();
         self.input_end_time.clear();
@@ -43,6 +42,7 @@ impl App {
                     (
                         entry.id,
                         entry.description.clone(),
+                        entry.project.clone().unwrap_or_default(),
                         entry.tags.join(" "),
                         entry.start_time.format("%Y-%m-%d %H:%M").to_string(),
                         entry.end_time.map(|t| t.format("%Y-%m-%d %H:%M").to_string()),
@@ -52,9 +52,10 @@ impl App {
             })
         };
 
-        if let Some((id, description, tags, start_time, end_time, duration)) = entry_data {
+        if let Some((id, description, project, tags, start_time, end_time, duration)) = entry_data {
             self.editing_entry_id = Some(id);
             self.input_description = description;
+            self.input_project = project;
             self.input_tags = tags;
             self.input_start_time = start_time;
             self.input_end_time = end_time.unwrap_or_default();
@@ -80,8 +81,11 @@ impl App {
         let Some((description, tags, start_time, end_time)) = self.build_entry_fields() else {
             return Ok(());
         };
-        self.data.add_entry(description, None, tags, start_time, end_time);
-        save_data(&self.data)?;
+        let project = self.parse_project();
+        // Added against the freshly loaded store, so the id is the current `next_id`.
+        self.mutate_store(|data| {
+            data.add_entry(description, project, tags, start_time, end_time);
+        })?;
         self.cancel_adding();
         Ok(())
     }
@@ -93,10 +97,11 @@ impl App {
         let Some((description, tags, start_time, end_time)) = self.build_entry_fields() else {
             return Ok(());
         };
-        // The form has no project field yet, so an edit keeps whatever the entry has.
-        let project = self.data.get_entry(entry_id).and_then(|e| e.project.clone());
-        self.data.update_entry(entry_id, description, project, tags, start_time, end_time);
-        save_data(&self.data)?;
+        let project = self.parse_project();
+        // Updating an id that is no longer in the store returns false, not an error.
+        self.mutate_store(|data| {
+            data.update_entry(entry_id, description, project, tags, start_time, end_time)
+        })?;
         self.cancel_adding();
         Ok(())
     }
@@ -105,7 +110,8 @@ impl App {
         let leaving = self.input_field;
         self.apply_time_calculations(leaving);
         self.input_field = match self.input_field {
-            InputField::Description => InputField::Tags,
+            InputField::Description => InputField::Project,
+            InputField::Project => InputField::Tags,
             InputField::Tags => InputField::Duration,
             InputField::Duration => InputField::StartTime,
             InputField::StartTime => InputField::EndTime,
@@ -119,7 +125,8 @@ impl App {
         self.apply_time_calculations(leaving);
         self.input_field = match self.input_field {
             InputField::Description => InputField::EndTime,
-            InputField::Tags => InputField::Description,
+            InputField::Project => InputField::Description,
+            InputField::Tags => InputField::Project,
             InputField::Duration => InputField::Tags,
             InputField::StartTime => InputField::Duration,
             InputField::EndTime => InputField::StartTime,
@@ -131,6 +138,7 @@ impl App {
         let pos = self.cursor_pos;
         let s = match self.input_field {
             InputField::Description => &mut self.input_description,
+            InputField::Project => &mut self.input_project,
             InputField::Tags => &mut self.input_tags,
             InputField::StartTime => &mut self.input_start_time,
             InputField::EndTime => &mut self.input_end_time,
@@ -145,6 +153,7 @@ impl App {
         let pos = self.cursor_pos;
         let s = match self.input_field {
             InputField::Description => &mut self.input_description,
+            InputField::Project => &mut self.input_project,
             InputField::Tags => &mut self.input_tags,
             InputField::StartTime => &mut self.input_start_time,
             InputField::EndTime => &mut self.input_end_time,
@@ -164,6 +173,7 @@ impl App {
     pub(crate) fn active_field_input(&self) -> &str {
         match self.input_field {
             InputField::Description => &self.input_description,
+            InputField::Project => &self.input_project,
             InputField::Tags => &self.input_tags,
             InputField::StartTime => &self.input_start_time,
             InputField::EndTime => &self.input_end_time,
@@ -171,7 +181,7 @@ impl App {
         }
     }
 
-    /// Returns the text of the active input regardless of mode (form field or search bar).
+    /// The active input's text in any mode — form field or search bar.
     fn active_input(&self) -> &str {
         match self.input_mode {
             super::types::InputMode::Searching => &self.search_term,
@@ -195,11 +205,9 @@ impl App {
         let input = self.active_input().to_string();
         let chars: Vec<char> = input.chars().collect();
         let mut pos = self.cursor_pos.min(chars.len());
-        // Step back past non-alphanumeric chars
         while pos > 0 && !chars[pos - 1].is_alphanumeric() {
             pos -= 1;
         }
-        // Step back past the word
         while pos > 0 && chars[pos - 1].is_alphanumeric() {
             pos -= 1;
         }
@@ -212,11 +220,9 @@ impl App {
         let chars: Vec<char> = input.chars().collect();
         let len = chars.len();
         let mut pos = self.cursor_pos.min(len);
-        // Step forward past the word
         while pos < len && chars[pos].is_alphanumeric() {
             pos += 1;
         }
-        // Step forward past non-alphanumeric chars
         while pos < len && !chars[pos].is_alphanumeric() {
             pos += 1;
         }
@@ -225,12 +231,8 @@ impl App {
 
     // ── Time resolution ──────────────────────────────────────────────────────
 
-    /// Resolve start/end times from the three input fields. Priority:
-    /// - Start + Duration → end = start + duration
-    /// - Start + End      → save both as-is
-    /// - End + Duration   → start = end - duration
-    /// - Duration only    → end = selected_date@now, start = end - duration
-    /// - Start only       → active entry (no end time)
+    /// Resolve start/end from the three fields, in priority order: Start+Duration,
+    /// Start+End, End+Duration, Duration only (ends now), Start only (still active).
     pub(crate) fn resolve_times(&self) -> Option<(DateTime<Local>, Option<DateTime<Local>>)> {
         let start = if !self.input_start_time.is_empty() {
             self.parse_time_str(&self.input_start_time)
@@ -254,9 +256,7 @@ impl App {
             (Some(s), Some(e), None) => Some((s, Some(e))),
             (None, Some(e), Some(d)) => Some((e - d, Some(e))),
             (None, None, Some(d)) => {
-                // Anchor to selected_date at current wall-clock time so that
-                // duration-only entries added while browsing a past day land
-                // on that day rather than today.
+                // Anchored to selected_date, so a past day's entry lands on that day.
                 let now_time = Local::now().time();
                 let end = self.selected_date
                     .and_time(now_time)
@@ -270,12 +270,8 @@ impl App {
         }
     }
 
-    /// Auto-fill missing time fields when the user tabs away from a field.
-    ///
-    /// - Leave StartTime:  if Dur set → End = Start + Dur; else if End set → Dur = End − Start
-    /// - Leave EndTime:    if Start + Dur → adjust Start; else if Start → Dur = End − Start;
-    ///                     else if Dur only → Start = End − Dur
-    /// - Leave Duration:   if Start → End = Start + Dur; else if End → Start = End − Dur
+    /// Tabbing off Start / End / Duration derives whichever of the other two is still
+    /// blank, preferring to adjust the field the user did not just leave.
     pub(crate) fn apply_time_calculations(&mut self, leaving_field: InputField) {
         let start_str = self.input_start_time.clone();
         let end_str = self.input_end_time.clone();
@@ -370,8 +366,7 @@ impl App {
         None
     }
 
-    /// Parse a time string. Supports 24-hour and 12-hour (am/pm) formats with
-    /// `:` or `.` as separator; minutes default to `00` when omitted.
+    /// Parse a time: 24- or 12-hour, `:` or `.` separated, minutes default to `00`.
     fn parse_time_part(s: &str) -> Option<chrono::NaiveTime> {
         use chrono::NaiveTime;
 
@@ -412,13 +407,22 @@ impl App {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    /// Returns the date of the entry currently under the cursor, if any.
     fn date_under_cursor(&self) -> Option<chrono::NaiveDate> {
         let filtered = self.filtered_entries();
         self.table_state
             .selected()
             .and_then(|idx| filtered.get(idx))
             .map(|entry| entry.start_time.date_naive())
+    }
+
+    /// The project as typed, trimmed; an empty field means "no project".
+    fn parse_project(&self) -> Option<String> {
+        let project = self.input_project.trim();
+        if project.is_empty() {
+            None
+        } else {
+            Some(project.to_string())
+        }
     }
 
     fn parse_tags(&self) -> Vec<String> {
