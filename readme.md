@@ -60,6 +60,34 @@ tt today
 
 ---
 
+### `tt report [--week|--all|--since <date>] [--until <date>] [--project <name>] [--json]`
+
+Roll up logged time by project and item, with a per-phase breakdown.
+
+- `--week` — this week, from Monday
+- `--all` — every entry, unbounded
+- `--since <YYYY-MM-DD>` — from that date onwards
+- `--until <YYYY-MM-DD>` — up to and including that date; narrows one of the three
+  scopes above and is a usage error without one
+- `--project <name>` — only entries whose project is `<name>`
+- `--json` — machine-readable output
+
+With no scope it reports today. Project totals come from each entry's **project
+field** (`--project` on `tt start` / `tt log`), never from its tags.
+
+A trailing `*` marks an item with a running entry. When spans overlap, the report
+says so: `tt log` back-dates from now, so entries logged in a batch claim
+overlapping slots — the totals stay right, the timeline does not.
+
+```sh
+tt report
+tt report --week
+tt report --since 2026-08-01 --until 2026-08-05
+tt report --project timetracker-rs --json
+```
+
+---
+
 ### `tt list [-n <limit>]`
 
 Show the most recent entries across all days (defaults to the last 20).
