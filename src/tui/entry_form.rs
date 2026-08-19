@@ -80,7 +80,7 @@ impl App {
         let Some((description, tags, start_time, end_time)) = self.build_entry_fields() else {
             return Ok(());
         };
-        self.data.add_entry(description, tags, start_time, end_time);
+        self.data.add_entry(description, None, tags, start_time, end_time);
         save_data(&self.data)?;
         self.cancel_adding();
         Ok(())
@@ -93,7 +93,9 @@ impl App {
         let Some((description, tags, start_time, end_time)) = self.build_entry_fields() else {
             return Ok(());
         };
-        self.data.update_entry(entry_id, description, tags, start_time, end_time);
+        // The form has no project field yet, so an edit keeps whatever the entry has.
+        let project = self.data.get_entry(entry_id).and_then(|e| e.project.clone());
+        self.data.update_entry(entry_id, description, project, tags, start_time, end_time);
         save_data(&self.data)?;
         self.cancel_adding();
         Ok(())
