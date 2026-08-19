@@ -104,8 +104,20 @@ fn begin(project: &str, issue: &str, phase: &str) -> Result<()> {
                 since
             );
         }
+        Begin::Closing => refuse_unfinished_close(project, issue, phase),
     }
     Ok(())
+}
+
+/// Report a close that was started and never finished, and exit 75. The leftover
+/// is named, never cleared: only the operator can tell whether its entry landed.
+fn refuse_unfinished_close(project: &str, issue: &str, phase: &str) -> ! {
+    eprintln!(
+        "tt: {} has an unfinished close — a previous close may already have recorded its entry",
+        phase_name(project, issue, phase)
+    );
+    eprintln!("tt: check tt report, then tt agent cancel {project} {issue} {phase} to clear it.");
+    std::process::exit(75);
 }
 
 /// `tt agent touch <project> <issue|-> <phase>`: record one heartbeat. Exits 64
@@ -239,6 +251,10 @@ fn end(
     };
 
     let dir = mark_dir()?;
+    if marks::is_closing_in(&dir, project, issue, phase) {
+        refuse_unfinished_close(project, issue, phase);
+    }
+
     let mut idle = Vec::new();
     let mut split_at_idle = false;
     // Stays `None` on the explicit-minutes path, which reads no timestamps.
@@ -301,6 +317,9 @@ fn end(
         }
     };
 
+    // Written before the entry, so a mark directory that cannot be written fails
+    // here with nothing logged and the retry safe.
+    marks::start_closing_in(&dir, project, issue, phase)?;
     log_entry(
         project,
         issue,
@@ -313,7 +332,16 @@ fn end(
     )?;
     // Cleared only once the entry is recorded, on every successful close; a
     // refusal returned above with the mark and its beats left in place.
-    marks::cancel_in(&dir, project, issue, phase)?;
+    if let Err(err) = marks::cancel_in(&dir, project, issue, phase) {
+        eprintln!(
+            "tt: {} is recorded, but its mark could not be cleared: {err}",
+            phase_name(project, issue, phase)
+        );
+        eprintln!(
+            "tt: do not retry the close — run tt agent cancel {project} {issue} {phase} once the mark directory is writable."
+        );
+        std::process::exit(74);
+    }
     Ok(())
 }
 

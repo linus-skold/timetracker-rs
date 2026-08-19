@@ -6,7 +6,7 @@
 //! app's cache directory. The name is sanitised `[^A-Za-z0-9._-]` → `_`, so a
 //! segment may itself contain `.` or `_` and the name is **not** losslessly
 //! splittable. Heartbeats are one append-only file per mark in a `beats/`
-//! subdirectory.
+//! subdirectory, and an unfinished close leaves a `closing/` entry beside them.
 //!
 //! Only the start timestamp is read; see [`open_marks_in`].
 
@@ -140,8 +140,8 @@ pub fn open_marks() -> Vec<Mark> {
 /// Every open mark in `dir`, newest first; a bad file is skipped, never fatal.
 ///
 /// **Read no heartbeat here:** callers refresh on the directory's mtime, which a
-/// beat appended inside `beats/` does not change. The `beats/` subdirectory is
-/// skipped by the file-type filter below, never by its name — see [`beats_path`].
+/// beat appended inside `beats/` does not change. A subdirectory — `beats/` or
+/// `closing/` — is skipped by the file-type filter below, never by its name.
 pub fn open_marks_in(dir: &Path) -> Vec<Mark> {
     let Ok(entries) = fs::read_dir(dir) else {
         return Vec::new();
@@ -218,6 +218,8 @@ pub enum Begin {
     /// A mark was already open and is left byte-identical. `None` when its
     /// contents are not a timestamp, which the caller renders as `??:??`.
     AlreadyOpen(Option<DateTime<Local>>),
+    /// A close for this phase is unfinished, so nothing was written at all.
+    Closing,
 }
 
 /// What [`touch_in`] did: recorded a heartbeat, or refused for want of a mark.
@@ -256,16 +258,31 @@ pub fn beats_path(dir: &Path, key: &str) -> PathBuf {
     dir.join("beats").join(key)
 }
 
+/// The in-progress-close sentinel for `key` inside `dir`: a `closing/`
+/// **subdirectory** entry, so the mark listing's file-type filter skips it
+/// exactly as it skips `beats/`.
+pub fn closing_path(dir: &Path, key: &str) -> PathBuf {
+    dir.join("closing").join(key)
+}
+
 /// Open a mark for one phase, or report the one already open. `create_new` keeps
 /// the check and the write atomic, and an existing mark is never rewritten.
 pub fn begin_in(dir: &Path, project: &str, issue: &str, phase: &str) -> io::Result<Begin> {
-    let path = mark_path(dir, &mark_key(project, issue, phase));
+    let key = mark_key(project, issue, phase);
+    let path = mark_path(dir, &key);
     fs::create_dir_all(dir)?;
+
+    if closing_path(dir, &key).exists() {
+        return Ok(Begin::Closing);
+    }
 
     let start = Local::now();
     match OpenOptions::new().write(true).create_new(true).open(&path) {
         Ok(mut file) => {
             writeln!(file, "{}", start.timestamp())?;
+            // `create_new` succeeding proves no mark was open, so any beats
+            // still here are a part-way cancel's leftovers.
+            remove_if_present(&beats_path(dir, &key))?;
             Ok(Begin::Created(start))
         }
         Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
@@ -293,16 +310,47 @@ pub fn touch_in(dir: &Path, project: &str, issue: &str, phase: &str) -> io::Resu
     Ok(Touch::Recorded)
 }
 
-/// Drop a mark and its `beats/` entry, each allowed to be absent. The `beats/`
-/// directory itself stays; other phases' beats live in it.
+/// Record that a close for one phase is under way, holding the mark's start
+/// timestamp so the file names its own phase's span. An existing sentinel is
+/// overwritten; [`is_closing_in`] is what refuses.
+pub fn start_closing_in(dir: &Path, project: &str, issue: &str, phase: &str) -> io::Result<()> {
+    let key = mark_key(project, issue, phase);
+    let path = closing_path(dir, &key);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    // No mark on the explicit-minutes path, which reads no timestamps.
+    let start = read_start(&mark_path(dir, &key)).unwrap_or_else(Local::now);
+    fs::write(path, format!("{}\n", start.timestamp()))
+}
+
+/// Whether a close for one phase was started and never finished.
+pub fn is_closing_in(dir: &Path, project: &str, issue: &str, phase: &str) -> bool {
+    closing_path(dir, &mark_key(project, issue, phase)).exists()
+}
+
+/// Remove one path, treating an absent one as done.
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
+    }
+}
+
+/// Drop a mark, its `beats/` entry and its `closing/` sentinel, each allowed to
+/// be absent. **Beats go first**, so a failure part-way leaves a mark with no
+/// beats — which [`read_phase_in`] reports as a beat-less phase — rather than
+/// beats a later phase would read back as its own. The `beats/` and `closing/`
+/// directories themselves stay; other phases' files live in them.
 pub fn cancel_in(dir: &Path, project: &str, issue: &str, phase: &str) -> io::Result<()> {
     let key = mark_key(project, issue, phase);
-    for path in [mark_path(dir, &key), beats_path(dir, &key)] {
-        match fs::remove_file(&path) {
-            Ok(()) => {}
-            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-            Err(err) => return Err(err),
-        }
+    for path in [
+        beats_path(dir, &key),
+        mark_path(dir, &key),
+        closing_path(dir, &key),
+    ] {
+        remove_if_present(&path)?;
     }
     Ok(())
 }
@@ -716,6 +764,17 @@ mod tests {
 
     // --- writer -----------------------------------------------------------
 
+    /// Regular files directly in `dir`, so `beats/` and `closing/` do not count.
+    fn count_files(dir: &Path) -> usize {
+        match fs::read_dir(dir) {
+            Ok(entries) => entries
+                .flatten()
+                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                .count(),
+            Err(_) => 0,
+        }
+    }
+
     fn read(dir: &Path, name: &str) -> String {
         fs::read_to_string(dir.join(name)).unwrap()
     }
@@ -838,6 +897,115 @@ mod tests {
 
         cancel_in(&dir, "tt", "8", "impl").unwrap();
         cancel_in(&dir, "never", "1", "begun").unwrap();
+    }
+
+    // --- the closing sentinel ---------------------------------------------
+
+    #[test]
+    fn the_sentinel_holds_the_marks_own_start() {
+        let dir = sandbox("closing-round-trip");
+        let Begin::Created(start) = begin_in(&dir, "tt", "8", "impl").unwrap() else {
+            panic!("a fresh mark is created");
+        };
+        assert!(!is_closing_in(&dir, "tt", "8", "impl"));
+
+        start_closing_in(&dir, "tt", "8", "impl").unwrap();
+        assert!(is_closing_in(&dir, "tt", "8", "impl"));
+        assert_eq!(
+            read(&dir, "closing/tt.8.impl").trim(),
+            start.timestamp().to_string()
+        );
+    }
+
+    #[test]
+    fn cancel_clears_the_sentinel_with_the_mark_and_the_beats() {
+        let dir = sandbox("closing-cancel");
+        begin_in(&dir, "tt", "8", "impl").unwrap();
+        touch_in(&dir, "tt", "8", "impl").unwrap();
+        start_closing_in(&dir, "tt", "8", "impl").unwrap();
+
+        cancel_in(&dir, "tt", "8", "impl").unwrap();
+
+        assert!(!dir.join("tt.8.impl").exists());
+        assert!(!dir.join("beats/tt.8.impl").exists());
+        assert!(!dir.join("closing/tt.8.impl").exists());
+        assert!(
+            dir.join("closing").is_dir(),
+            "the closing directory itself stays"
+        );
+    }
+
+    /// Each of the three paths in turn is the only one present.
+    #[test]
+    fn cancel_tolerates_any_of_the_three_paths_being_absent() {
+        let dir = sandbox("closing-cancel-partial");
+
+        begin_in(&dir, "tt", "8", "impl").unwrap();
+        cancel_in(&dir, "tt", "8", "impl").unwrap();
+
+        fs::create_dir_all(dir.join("beats")).unwrap();
+        write(&dir.join("beats"), "tt.8.impl", "1000200\n");
+        cancel_in(&dir, "tt", "8", "impl").unwrap();
+
+        fs::create_dir_all(dir.join("closing")).unwrap();
+        write(&dir.join("closing"), "tt.8.impl", "1000100\n");
+        cancel_in(&dir, "tt", "8", "impl").unwrap();
+
+        assert_eq!(
+            count_files(&dir),
+            0,
+            "nothing is left in the mark directory"
+        );
+        assert_eq!(count_files(&dir.join("beats")), 0);
+        assert_eq!(count_files(&dir.join("closing")), 0);
+    }
+
+    #[test]
+    fn a_directory_holding_only_a_sentinel_lists_no_marks() {
+        let dir = sandbox("closing-not-a-mark");
+        fs::create_dir_all(dir.join("closing")).unwrap();
+        write(&dir.join("closing"), "tt.8.impl", "1000100\n");
+
+        assert_eq!(open_marks_in(&dir), Vec::new());
+    }
+
+    #[test]
+    fn begin_drops_the_beats_a_part_way_cancel_left_behind() {
+        let dir = sandbox("closing-stale-beats");
+        let stale = "1000100\n1000200\n";
+        fs::create_dir_all(dir.join("beats")).unwrap();
+        write(&dir.join("beats"), "tt.8.impl", stale);
+
+        let Begin::Created(_) = begin_in(&dir, "tt", "8", "impl").unwrap() else {
+            panic!("no mark was open, so one is created");
+        };
+
+        let phase = read_phase_in(&dir, "tt", "8", "impl").unwrap().unwrap();
+        assert_eq!(phase.beats, Vec::<i64>::new(), "the stale beats survived");
+        assert_eq!(phase.ended, None);
+
+        touch_in(&dir, "tt", "8", "impl").unwrap();
+        let beats = read(&dir, "beats/tt.8.impl");
+        assert_eq!(
+            beats.lines().count(),
+            stale.lines().count() - 1,
+            "the new beat is the only line: {beats:?}"
+        );
+    }
+
+    #[test]
+    fn begin_over_a_sentinel_refuses_and_writes_nothing() {
+        let dir = sandbox("closing-refuses-begin");
+        let stale = "1000100\n1000200\n";
+        fs::create_dir_all(dir.join("beats")).unwrap();
+        write(&dir.join("beats"), "tt.8.impl", stale);
+        fs::create_dir_all(dir.join("closing")).unwrap();
+        write(&dir.join("closing"), "tt.8.impl", "1000100\n");
+
+        assert_eq!(begin_in(&dir, "tt", "8", "impl").unwrap(), Begin::Closing);
+        assert!(!dir.join("tt.8.impl").exists(), "a mark was opened");
+        assert_eq!(read(&dir, "beats/tt.8.impl"), stale);
+        assert_eq!(read(&dir, "closing/tt.8.impl"), "1000100\n");
     }
 
     // --- what `end` measures ----------------------------------------------

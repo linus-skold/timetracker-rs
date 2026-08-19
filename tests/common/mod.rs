@@ -11,6 +11,8 @@
 
 use chrono::{DateTime, Local};
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -119,6 +121,18 @@ impl Case {
         self.marks.join("beats").join(key)
     }
 
+    pub fn closing_file(&self, key: &str) -> PathBuf {
+        self.marks.join("closing").join(key)
+    }
+
+    /// Fabricate the leftover an unfinished close would have left, holding the
+    /// start its mark holds.
+    pub fn write_closing(&self, key: &str, start: i64) {
+        let file = self.closing_file(key);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, format!("{start}\n")).unwrap();
+    }
+
     /// Write the sandbox's `config.toml`, at the path `TT_CONFIG_FILE` names.
     pub fn write_config(&self, body: &str) {
         fs::write(&self.config, body).unwrap();
@@ -207,6 +221,34 @@ impl Case {
     /// Regular files directly in the mark directory — the `beats` subdirectory is not one.
     pub fn mark_count(&self) -> usize {
         count_files(&self.marks)
+    }
+}
+
+/// One path's permission bits for the length of a scope, put back on drop whether
+/// the case passed or panicked. [`Case::new`] opens with `remove_dir_all`, so a
+/// mode left behind fails the **next** run of that case rather than this one.
+#[cfg(unix)]
+pub struct Mode {
+    path: PathBuf,
+    original: fs::Permissions,
+}
+
+#[cfg(unix)]
+impl Mode {
+    pub fn set(path: &Path, mode: u32) -> Self {
+        let original = fs::metadata(path).expect("the path to exist").permissions();
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        Self {
+            path: path.to_path_buf(),
+            original,
+        }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Mode {
+    fn drop(&mut self) {
+        let _ = fs::set_permissions(&self.path, self.original.clone());
     }
 }
 

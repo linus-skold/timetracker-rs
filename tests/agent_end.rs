@@ -6,7 +6,10 @@
 
 mod common;
 
-use common::{Case, clock, logged_duration, now};
+#[cfg(unix)]
+use common::Mode;
+use common::{Case, StoreRow, clock, logged_duration, now};
+use std::fs;
 
 // --- item ------------------------------------------------------------------
 
@@ -678,4 +681,126 @@ fn trim_on_a_phase_with_nothing_flagged_is_a_no_op() {
     let entries = case.store().entries;
     assert_eq!(entries.len(), 1, "nothing was split");
     assert!(entries[0].idle.is_empty());
+}
+
+// --- an unwritable mark directory ------------------------------------------
+
+/// A 30-minute beaten phase with one unrelated entry already in the store, so
+/// every count below is a delta against something.
+struct ClosableFixture {
+    /// Entries in the store before the close.
+    before: usize,
+    start: i64,
+}
+
+fn closable_fixture(case: &Case) -> ClosableFixture {
+    case.write_store(&[StoreRow {
+        description: "an earlier phase",
+        project: Some("proj"),
+        tags: &["proj/7", "review", "agent"],
+        start: now() - 7200,
+        end: Some(now() - 5400),
+    }]);
+    let start = now() - 30 * 60;
+    case.write_mark("proj.7.impl", start);
+    case.beats_at("proj.7.impl", &[start + 10 * 60, start + 30 * 60]);
+    ClosableFixture {
+        before: case.store().entries.len(),
+        start,
+    }
+}
+
+/// The failure needs no crash: an unwritable mark directory alone used to log the
+/// entry and leave the mark, so the retry the non-zero exit invites logged the
+/// same span again.
+/// Needs a mode change to make `unlink` fail, which has no Windows equivalent.
+#[cfg(unix)]
+#[test]
+fn an_unwritable_mark_directory_logs_nothing_and_the_retry_logs_once() {
+    let case = Case::new("end-unwritable");
+    let fixture = closable_fixture(&case);
+
+    let run = {
+        let _mode = Mode::set(&case.marks, 0o555);
+        case.run(&["end", "proj", "7", "impl", "did the thing"])
+    };
+    assert_eq!(run.status, Some(1), "stderr: {:?}", run.stderr);
+    assert_ne!(
+        run.status,
+        Some(74),
+        "74 would mean the entry was recorded after all"
+    );
+    assert_eq!(
+        case.store().entries.len() - fixture.before,
+        0,
+        "the store gained an entry: {:?}",
+        case.store().entries
+    );
+    assert!(case.mark_file("proj.7.impl").is_file(), "the mark survived");
+    assert!(!case.closing_file("proj.7.impl").exists());
+
+    let retry = case.run(&["end", "proj", "7", "impl", "did the thing"]);
+    retry.assert_status(0);
+    assert_eq!(
+        case.store().entries.len() - fixture.before,
+        1,
+        "the retry logged the span more than once: {:?}",
+        case.store().entries
+    );
+    assert_eq!(case.mark_count(), 0);
+    assert!(!case.closing_file("proj.7.impl").exists());
+}
+
+/// The residual state this narrows to: recorded, uncleared, and refused rather
+/// than logged a second time.
+#[test]
+fn a_close_left_unfinished_refuses_instead_of_logging_again() {
+    let case = Case::new("end-unfinished");
+    let fixture = closable_fixture(&case);
+    case.write_closing("proj.7.impl", fixture.start);
+
+    let run = case.run(&["end", "proj", "7", "impl", "did the thing"]);
+    run.assert_status(75);
+    run.assert_stderr_has("proj/7 impl has an unfinished close");
+    run.assert_stderr_has("tt agent cancel proj 7 impl");
+    assert_eq!(
+        case.store().entries.len() - fixture.before,
+        0,
+        "the store gained an entry: {:?}",
+        case.store().entries
+    );
+    // Named, never cleared: only the operator can tell whether the entry landed.
+    assert!(case.closing_file("proj.7.impl").is_file());
+    assert!(case.mark_file("proj.7.impl").is_file());
+}
+
+/// The one case where the entry does land and the cleanup does not: the `closing/`
+/// directory is already there, so only the mark's own removal hits the mode.
+/// Needs a mode change to make `unlink` fail, which has no Windows equivalent.
+#[cfg(unix)]
+#[test]
+fn an_entry_recorded_with_the_mark_left_behind_exits_74() {
+    let case = Case::new("end-uncleared");
+    let fixture = closable_fixture(&case);
+    fs::create_dir_all(case.closing_file("proj.7.impl").parent().unwrap()).unwrap();
+
+    let run = {
+        let _mode = Mode::set(&case.marks, 0o555);
+        case.run(&["end", "proj", "7", "impl", "did the thing"])
+    };
+    run.assert_status(74);
+    run.assert_stderr_has("proj/7 impl is recorded, but its mark could not be cleared");
+    run.assert_stderr_has("do not retry the close");
+    assert_eq!(
+        case.store().entries.len() - fixture.before,
+        1,
+        "the entry is recorded exactly once: {:?}",
+        case.store().entries
+    );
+    assert!(case.mark_file("proj.7.impl").is_file(), "the mark survived");
+
+    // A caller that retries anyway is refused rather than logging the span twice.
+    let retry = case.run(&["end", "proj", "7", "impl", "did the thing"]);
+    retry.assert_status(75);
+    assert_eq!(case.store().entries.len() - fixture.before, 1);
 }

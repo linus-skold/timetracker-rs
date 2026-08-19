@@ -154,6 +154,14 @@ The TUI shows the same open phases in its **Agents** panel, on `Shift-A`.
   stored — a smaller figure than the span it was given.
 - **exit 64, no mark** — never marked, or the mark was lost. Use `item` with a
   duration you can justify, or ask. A missing summary is the same exit code.
+- **exit 75, a close left unfinished** — an earlier close started and never finished, so
+  it may already have recorded the entry. `begin` refuses on the same leftover. Read
+  `tt report` first: if the entry is there, `tt agent cancel` the phase to clear the
+  leftover; if it is not, cancel and then close the phase again. Never clear it blind.
+- **exit 74, recorded but not cleared** — the entry **is** in the store and only the
+  mark cleanup failed, an unwritable mark directory being the usual cause. **Do not
+  retry the close**: a retry is exactly what would log the span twice. Say what
+  happened, and `tt agent cancel` the phase once the directory is writable again.
 
 ## Reading back
 
