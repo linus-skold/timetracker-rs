@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+mod activity;
 mod agent;
 mod cli;
 mod config;

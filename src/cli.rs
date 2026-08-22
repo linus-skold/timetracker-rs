@@ -181,6 +181,29 @@ pub enum AgentCommands {
         #[arg(long)]
         trim: bool,
     },
+    /// The hook-only activity ledger, hidden from `--help`: written by
+    /// Claude Code's SessionStart/Stop/SubagentStop hooks, never by an
+    /// agent's own judgment. See docs/decisions/0001-agent-activity-tracking.md.
+    #[command(hide = true, subcommand)]
+    Activity(ActivityCommands),
+}
+
+/// See [`AgentCommands::Activity`]. Each hook invocation names the harness's
+/// own session id, the one stable key across a SessionStart/Stop pair.
+#[derive(Subcommand)]
+pub enum ActivityCommands {
+    /// SessionStart: open this session's activity window.
+    Begin {
+        session_id: String,
+        /// Resolved the same way the skill resolves it: `$TT_PROJECT`, else
+        /// the repo directory name, else omitted.
+        project: Option<String>,
+    },
+    /// Stop: close this session's activity window.
+    End { session_id: String },
+    /// SubagentStop: record that one subagent dispatch finished during this
+    /// session's window.
+    Subagent { session_id: String },
 }
 
 impl AgentCommands {
@@ -193,7 +216,8 @@ impl AgentCommands {
             AgentCommands::Begin { .. }
             | AgentCommands::Touch { .. }
             | AgentCommands::Cancel { .. }
-            | AgentCommands::List => false,
+            | AgentCommands::List
+            | AgentCommands::Activity(_) => false,
             AgentCommands::Item { .. } | AgentCommands::End { .. } => true,
         }
     }
@@ -219,10 +243,7 @@ fn parse_idle(value: &str) -> Result<IdleInterval, String> {
     let start = stamp("start", start)?;
     let end = stamp("end", end)?;
     if end < start {
-        return Err(format!(
-            "idle interval ends before it starts: `{}`",
-            value
-        ));
+        return Err(format!("idle interval ends before it starts: `{}`", value));
     }
     Ok(IdleInterval::new(start, end))
 }
@@ -290,9 +311,9 @@ pub fn start(description: Vec<String>, project: Option<String>) -> Result<()> {
 
 pub fn stop() -> Result<()> {
     let stopped = with_data(|data| {
-        let info = data.active_entry().map(|e| {
-            (e.description.clone(), e.format_duration())
-        });
+        let info = data
+            .active_entry()
+            .map(|e| (e.description.clone(), e.format_duration()));
 
         if data.stop_active() {
             Ok(info)
@@ -302,7 +323,12 @@ pub fn stop() -> Result<()> {
     })?;
 
     if let Some((desc, dur)) = stopped {
-        println!("{}  Stopped: \"{}\" - Duration: {}", icons::stopped(), desc, dur);
+        println!(
+            "{}  Stopped: \"{}\" - Duration: {}",
+            icons::stopped(),
+            desc,
+            dur
+        );
     } else {
         println!("No active task to stop.");
     }
@@ -383,7 +409,11 @@ pub fn today() -> Result<()> {
 
     println!("{} Today's entries:\n", icons::calendar());
     for entry in &today_entries {
-        let status = if entry.is_active() { entry.status_icon() } else { "  " };
+        let status = if entry.is_active() {
+            entry.status_icon()
+        } else {
+            "  "
+        };
         let tags_display = if entry.tags.is_empty() {
             String::new()
         } else {
@@ -414,7 +444,11 @@ pub fn list(limit: Option<usize>) -> Result<()> {
 
     println!("{} All entries:\n", icons::list());
     for entry in data.entries.iter().rev().take(limit) {
-        let status = if entry.is_active() { entry.status_icon() } else { "  " };
+        let status = if entry.is_active() {
+            entry.status_icon()
+        } else {
+            "  "
+        };
         let tags_display = if entry.tags.is_empty() {
             String::new()
         } else {
@@ -438,7 +472,11 @@ pub fn status() -> Result<()> {
     let data = load_data()?;
 
     if let Some(active) = data.active_entry() {
-        println!("{}  Currently tracking: \"{}\"", icons::active(), active.description);
+        println!(
+            "{}  Currently tracking: \"{}\"",
+            icons::active(),
+            active.description
+        );
         if let Some(project) = &active.project {
             println!("   Project: {}", project);
         }
