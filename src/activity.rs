@@ -85,6 +85,64 @@ fn append_field(dir: &Path, session_id: &str, field: &str) -> io::Result<()> {
     writeln!(file, "{field}={}", Local::now().timestamp())
 }
 
+// --- reader -----------------------------------------------------------
+//
+// Read only, for `tt agent audit` (see `src/audit.rs`) — nothing here writes.
+
+/// One session's window, as read back from its file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Session {
+    pub project: Option<String>,
+    pub start: i64,
+    /// `None` while the session is still open.
+    pub end: Option<i64>,
+    /// How many `subagent=` markers were recorded.
+    pub subagents: usize,
+}
+
+/// Every session in `dir`. A file with no `start=` line is skipped — it is
+/// not a session this ledger recognises.
+pub fn read_sessions_in(dir: &Path) -> Vec<Session> {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+        .filter_map(|e| read_session(&e.path()))
+        .collect()
+}
+
+fn read_session(path: &Path) -> Option<Session> {
+    let body = fs::read_to_string(path).ok()?;
+    let mut project = None;
+    let mut start = None;
+    let mut end = None;
+    let mut subagents = 0;
+
+    for line in body.lines() {
+        let Some((field, value)) = line.split_once('=') else {
+            continue;
+        };
+        match field {
+            "project" => project = Some(value.to_string()),
+            "start" => start = value.parse().ok(),
+            // The last `end=` line wins, so a Stop that fired more than once
+            // is measured to its final close.
+            "end" => end = value.parse().ok(),
+            "subagent" => subagents += 1,
+            _ => {}
+        }
+    }
+
+    Some(Session {
+        project,
+        start: start?,
+        end,
+        subagents,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,6 +244,61 @@ mod tests {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-')),
             "{name:?} was not sanitised"
         );
+    }
+
+    // --- reader -------------------------------------------------------
+
+    #[test]
+    fn a_session_reads_back_its_project_start_end_and_subagent_count() {
+        let dir = sandbox("read-round-trip");
+        begin_in(&dir, "sess-1", Some("tt")).unwrap();
+        subagent_in(&dir, "sess-1").unwrap();
+        subagent_in(&dir, "sess-1").unwrap();
+        end_in(&dir, "sess-1").unwrap();
+
+        let sessions = read_sessions_in(&dir);
+        assert_eq!(sessions.len(), 1);
+        let session = &sessions[0];
+        assert_eq!(session.project.as_deref(), Some("tt"));
+        assert!(session.end.is_some());
+        assert_eq!(session.subagents, 2);
+    }
+
+    #[test]
+    fn a_session_with_no_end_reads_back_as_still_open() {
+        let dir = sandbox("read-open");
+        begin_in(&dir, "sess-1", None).unwrap();
+
+        let sessions = read_sessions_in(&dir);
+        assert_eq!(sessions[0].end, None);
+        assert_eq!(sessions[0].project, None);
+    }
+
+    #[test]
+    fn repeated_end_lines_read_back_as_the_last_one() {
+        let dir = sandbox("read-repeated-end");
+        let path = session_path(&dir, "sess-1");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&path, "start=1000\nend=1100\nend=1200\n").unwrap();
+
+        assert_eq!(read_sessions_in(&dir)[0].end, Some(1200));
+    }
+
+    #[test]
+    fn a_file_with_no_start_line_is_not_a_session() {
+        let dir = sandbox("read-no-start");
+        let path = session_path(&dir, "garbage");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&path, "project=tt\n").unwrap();
+
+        assert_eq!(read_sessions_in(&dir), Vec::new());
+    }
+
+    #[test]
+    fn a_missing_directory_reads_as_no_sessions() {
+        let dir = sandbox("read-missing");
+        fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(read_sessions_in(&dir), Vec::new());
     }
 
     #[test]

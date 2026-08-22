@@ -14,10 +14,14 @@ use chrono::{DateTime, Local};
 use crate::tracker::IdleInterval;
 
 use crate::activity;
+use crate::audit;
 use crate::cli::{self, ActivityCommands, AgentCommands};
 use crate::config;
+use crate::duration;
 use crate::icons;
 use crate::marks::{self, Begin, Touch};
+use crate::storage;
+use crate::tracker;
 
 /// Run one `tt agent` subcommand.
 pub fn run(command: &AgentCommands) -> Result<()> {
@@ -69,6 +73,7 @@ pub fn run(command: &AgentCommands) -> Result<()> {
             *trim,
         ),
         AgentCommands::Activity(command) => activity_command(command),
+        AgentCommands::Audit => run_audit(),
     }
 }
 
@@ -177,6 +182,49 @@ fn list() -> Result<()> {
     println!("{} Open marks:\n", icons::agent());
     for row in marks::rows(&marks) {
         println!("  {}", row);
+    }
+    Ok(())
+}
+
+/// `tt agent audit`: reconcile the activity ledger against marks and logged
+/// entries, reporting activity with no evidence it was ever tracked. Missing
+/// or unreadable activity/mark directories read as empty rather than erroring
+/// — an audit must never fail over there being nothing to audit yet.
+fn run_audit() -> Result<()> {
+    let sessions = activity::activity_dir()
+        .map(|dir| activity::read_sessions_in(&dir))
+        .unwrap_or_default();
+    let marks = marks::open_marks();
+    let mut data = storage::load_data()?;
+    tracker::migrate(&mut data);
+
+    let flagged = audit::unaccounted(
+        &sessions,
+        &marks,
+        &data.entries,
+        chrono::Local::now(),
+        max_unvouched_minutes(),
+    );
+
+    if flagged.is_empty() {
+        println!("No unaccounted agent activity.");
+        return Ok(());
+    }
+
+    println!("{} Unaccounted agent activity:\n", icons::warning());
+    for item in &flagged {
+        let subagents = match item.subagents {
+            0 => String::new(),
+            1 => ", 1 subagent dispatch".to_string(),
+            n => format!(", {n} subagent dispatches"),
+        };
+        println!(
+            "  {} - since {} ({}{})",
+            item.project,
+            item.start.format("%H:%M"),
+            duration::format(item.end.signed_duration_since(item.start)),
+            subagents
+        );
     }
     Ok(())
 }
