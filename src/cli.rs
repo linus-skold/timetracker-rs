@@ -202,6 +202,10 @@ pub enum ActivityCommands {
     End { session_id: String },
     /// SubagentStop: record that one subagent dispatch finished.
     Subagent { session_id: String },
+    /// Stop: report this one session's window if it is unaccounted for,
+    /// silent otherwise. Same reconciliation as `tt agent audit`, narrowed
+    /// to a single session so the Stop hook can warn immediately.
+    Check { session_id: String },
 }
 
 impl AgentCommands {
