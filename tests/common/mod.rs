@@ -24,6 +24,7 @@ pub struct Case {
     pub marks: PathBuf,
     pub data: PathBuf,
     pub config: PathBuf,
+    pub activity: PathBuf,
 }
 
 pub struct Run {
@@ -40,14 +41,17 @@ impl Case {
         let marks = root.join("marks");
         let data = root.join("store");
         let config = root.join("config.toml");
+        let activity = root.join("activity");
         fs::create_dir_all(&home).unwrap();
         fs::create_dir_all(&marks).unwrap();
         fs::create_dir_all(&data).unwrap();
+        fs::create_dir_all(&activity).unwrap();
         Self {
             home,
             marks,
             data,
             config,
+            activity,
         }
     }
 
@@ -83,7 +87,8 @@ impl Case {
             self.home.starts_with(std::env::temp_dir())
                 && self.marks.starts_with(root)
                 && self.data.starts_with(root)
-                && self.config.starts_with(root),
+                && self.config.starts_with(root)
+                && self.activity.starts_with(root),
             "sandbox paths escaped the scratch directory: {:?}",
             self.home
         );
@@ -93,6 +98,7 @@ impl Case {
         command.env("HOME", &self.home);
         command.env("TT_DATA_DIR", &self.data);
         command.env("TT_CONFIG_FILE", &self.config);
+        command.env("TT_ACTIVITY_DIR", &self.activity);
         // `env_clear()` strips this too, so it has to be set explicitly on every
         // run — otherwise every one of these subprocess invocations would attempt
         // a real network call to GitHub's release API during `cargo test`.
@@ -145,6 +151,16 @@ impl Case {
     /// Fabricate an open mark started at an absolute epoch.
     pub fn write_mark(&self, key: &str, start: i64) {
         fs::write(self.mark_file(key), format!("{start}\n")).unwrap();
+    }
+
+    /// Fabricate an activity-ledger session file the way a hook would, at
+    /// absolute epochs. `end` is `None` for a still-open session.
+    pub fn write_session(&self, session_id: &str, project: &str, start: i64, end: Option<i64>) {
+        let mut body = format!("start={start}\nproject={project}\n");
+        if let Some(end) = end {
+            body.push_str(&format!("end={end}\n"));
+        }
+        fs::write(self.activity.join(session_id), body).unwrap();
     }
 
     /// Run `tt <args>` with **no** `agent` prefix, for the store-reading commands.
