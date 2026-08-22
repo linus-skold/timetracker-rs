@@ -22,6 +22,39 @@ pub struct Unaccounted {
     pub subagents: usize,
 }
 
+impl Unaccounted {
+    /// `<project> - since HH:MM (Xh Ym)`, with a trailing subagent-dispatch
+    /// count when there were any. Shared by the CLI (`tt agent audit`,
+    /// `tt agent activity check`) and the TUI's Agents panel, so the two
+    /// cannot disagree on how this reads.
+    pub fn describe(&self) -> String {
+        let subagents = match self.subagents {
+            0 => String::new(),
+            1 => ", 1 subagent dispatch".to_string(),
+            n => format!(", {n} subagent dispatches"),
+        };
+        format!(
+            "{} - since {} ({}{})",
+            self.project,
+            self.start.format("%H:%M"),
+            crate::duration::format(self.end.signed_duration_since(self.start)),
+            subagents
+        )
+    }
+}
+
+/// How long an activity window may run with no covering mark or entry before
+/// it counts as unaccounted, in minutes. Shared with the same setting
+/// `tt agent end` judges an unvouched phase against: `TT_MAX_UNVOUCHED_MINUTES`,
+/// else `agent.max_unvouched_minutes`, else 120.
+pub fn max_unvouched_minutes() -> i64 {
+    crate::config::resolve_minutes(
+        "TT_MAX_UNVOUCHED_MINUTES",
+        crate::config::load().agent.max_unvouched_minutes,
+        120,
+    )
+}
+
 /// Half-open interval overlap: touching endpoints do not count.
 fn overlaps(a_start: i64, a_end: i64, b_start: i64, b_end: i64) -> bool {
     a_start < b_end && b_start < a_end

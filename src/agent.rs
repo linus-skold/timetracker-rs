@@ -17,7 +17,6 @@ use crate::activity;
 use crate::audit;
 use crate::cli::{self, ActivityCommands, AgentCommands};
 use crate::config;
-use crate::duration;
 use crate::icons;
 use crate::marks::{self, Begin, Touch};
 use crate::storage;
@@ -112,10 +111,10 @@ fn check_session(dir: &std::path::Path, session_id: &str) -> Result<()> {
         &marks,
         &data.entries,
         chrono::Local::now(),
-        max_unvouched_minutes(),
+        audit::max_unvouched_minutes(),
     );
     for item in &flagged {
-        println!("{}", unaccounted_row(item));
+        println!("{}", item.describe());
     }
     Ok(())
 }
@@ -229,7 +228,7 @@ fn run_audit() -> Result<()> {
         &marks,
         &data.entries,
         chrono::Local::now(),
-        max_unvouched_minutes(),
+        audit::max_unvouched_minutes(),
     );
 
     if flagged.is_empty() {
@@ -239,26 +238,9 @@ fn run_audit() -> Result<()> {
 
     println!("{} Unaccounted agent activity:\n", icons::warning());
     for item in &flagged {
-        println!("  {}", unaccounted_row(item));
+        println!("  {}", item.describe());
     }
     Ok(())
-}
-
-/// `<project> - since HH:MM (Xh Ym)`, with a trailing subagent-dispatch count
-/// when there were any. Shared by `tt agent audit` and `tt agent activity check`.
-fn unaccounted_row(item: &audit::Unaccounted) -> String {
-    let subagents = match item.subagents {
-        0 => String::new(),
-        1 => ", 1 subagent dispatch".to_string(),
-        n => format!(", {n} subagent dispatches"),
-    };
-    format!(
-        "{} - since {} ({}{})",
-        item.project,
-        item.start.format("%H:%M"),
-        duration::format(item.end.signed_duration_since(item.start)),
-        subagents
-    )
 }
 
 /// `tt agent item <project> <issue|-> <phase> <summary> <minutes>`: log one
@@ -383,7 +365,7 @@ fn end(
             // A mark with heartbeats is judged against the interior-silence
             // threshold, a mark with none against the longer unvouched one.
             let threshold = if marked.beats.is_empty() {
-                max_unvouched_minutes()
+                audit::max_unvouched_minutes()
             } else {
                 max_gap_minutes()
             };
@@ -489,33 +471,11 @@ fn article(minutes: i64) -> &'static str {
 /// How long a silence *between heartbeats* has to be to count, in minutes.
 /// `TT_MAX_GAP_MINUTES`, else `agent.max_gap_minutes`, else 45.
 fn max_gap_minutes() -> i64 {
-    minutes(
+    config::resolve_minutes(
         "TT_MAX_GAP_MINUTES",
         config::load().agent.max_gap_minutes,
         45,
     )
-}
-
-/// How long an **unvouched** phase — a mark with no heartbeat at all — may run
-/// before the close is refused. `TT_MAX_UNVOUCHED_MINUTES`, else
-/// `agent.max_unvouched_minutes`, else 120, longer than the interior-silence
-/// threshold.
-fn max_unvouched_minutes() -> i64 {
-    minutes(
-        "TT_MAX_UNVOUCHED_MINUTES",
-        config::load().agent.max_unvouched_minutes,
-        120,
-    )
-}
-
-/// A minutes-valued setting: the environment wins over the config file, which
-/// wins over the built-in default. Set-but-empty and unparseable read as unset.
-fn minutes(name: &str, configured: Option<i64>, default: i64) -> i64 {
-    std::env::var(name)
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .or(configured)
-        .unwrap_or(default)
 }
 
 fn instant(epoch: i64) -> Result<DateTime<Local>> {

@@ -1,26 +1,30 @@
+use crate::activity::Session;
+use crate::audit::Unaccounted;
+use crate::marks::Mark;
+use crate::storage::{PathStamp, load_data};
+use crate::tracker::TimeData;
 use anyhow::Result;
 use chrono::{Local, NaiveDate};
-use std::io::{self, Stdout};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{
+        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend, widgets::TableState};
-use crate::marks::Mark;
-use crate::storage::{PathStamp, load_data};
-use crate::tracker::TimeData;
+use std::io::{self, Stdout};
 
-pub mod theme;
-pub mod types;
-mod search;
-mod navigation;
 mod entry_form;
 mod marks_surface;
+mod navigation;
 mod onboarding;
 mod panes;
-mod summary;
 mod render;
+mod search;
+mod summary;
+pub mod theme;
+pub mod types;
 
 pub use types::{
     ConfirmAction, Focus, InputField, InputMode, OnboardingStep, Pane, PendingConfirm, SortOrder,
@@ -57,6 +61,14 @@ pub(crate) struct App {
     pub(crate) marks: Vec<Mark>,
     /// Fingerprint of the *mark directory*, so a tick need not list it.
     pub(crate) marks_stamp: Option<PathStamp>,
+    /// The hook-only activity ledger's sessions, cached the same way `marks` is.
+    pub(crate) activity_sessions: Vec<Session>,
+    /// Fingerprint of the *activity directory*, so a tick need not list it.
+    pub(crate) activity_stamp: Option<PathStamp>,
+    /// Activity windows with no covering mark or logged entry — recomputed
+    /// each tick from `marks`, `activity_sessions` and `data`, never read
+    /// from disk itself. See `docs/decisions/0001-agent-activity-tracking.md`.
+    pub(crate) unaccounted: Vec<Unaccounted>,
     /// Whether each collapsible surface is open. All default to off, so their rows
     /// are absent from the layout plan.
     pub(crate) show_projects: bool,
@@ -116,6 +128,9 @@ impl App {
             store_stamp,
             marks: Vec::new(),
             marks_stamp: None,
+            activity_sessions: Vec::new(),
+            activity_stamp: None,
+            unaccounted: Vec::new(),
             table_state: TableState::default().with_selected(Some(0)),
             should_quit: false,
             view_mode: ViewMode::Day,
@@ -158,6 +173,7 @@ impl App {
         };
         // The first tick is 250 ms away, so read now for a current first frame.
         app.sync_from_marks();
+        app.sync_from_activity();
         Ok(app)
     }
 
@@ -498,6 +514,7 @@ pub fn run_tui(update_notice: Option<String>) -> Result<()> {
         // The poll above is the loop's clock, key or timeout alike.
         app.sync_from_store()?;
         app.sync_from_marks();
+        app.sync_from_activity();
 
         if app.should_quit {
             break;
@@ -511,13 +528,13 @@ pub fn run_tui(update_notice: Option<String>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Datelike;
     use crate::storage;
     /// Serialises the tests that repoint `HOME` and `TT_MARK_DIR`; env is
     /// process-wide, and `marks`' own env test shares this lock.
     use crate::storage::env_guard;
     use crate::storage::env_sandbox as sandbox;
     use crate::tracker::TimeEntry;
+    use chrono::Datelike;
     use std::path::PathBuf;
 
     /// The sandbox's mark directory, created on demand.
@@ -1172,6 +1189,112 @@ mod tests {
         }
     }
 
+    /// The sandbox's activity directory, created on demand.
+    fn activity_sandbox() -> PathBuf {
+        let dir = crate::activity::activity_dir().expect("an activity dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Write a session file the way a hook would, backdated `hours_ago`, still
+    /// open (no `end=` line). Never shells out.
+    fn write_session(dir: &std::path::Path, session_id: &str, project: &str, hours_ago: i64) {
+        let start = (Local::now() - chrono::Duration::hours(hours_ago)).timestamp();
+        std::fs::write(
+            dir.join(session_id),
+            format!("start={start}\nproject={project}\n"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn an_unaccounted_session_adds_a_header_and_row_to_the_surface_height() {
+        let _guard = env_guard();
+        sandbox("unaccounted-height");
+        seed(vec![entry(0, "first")], 1);
+        let mut app = seed_marks(&[]);
+        app.toggle_marks();
+        assert_eq!(
+            app.marks_surface_height(),
+            3,
+            "empty: just the marks section"
+        );
+
+        let dir = activity_sandbox();
+        // Well past the default 120-minute floor, and no mark or entry covers it.
+        write_session(&dir, "sess-1", "smoke", 3);
+        app.activity_stamp = None; // force a re-read; the tick would do this
+        app.sync_from_activity();
+
+        assert_eq!(app.unaccounted.len(), 1);
+        assert_eq!(
+            app.marks_surface_height(),
+            5,
+            "+1 header, +1 row for the one unaccounted window"
+        );
+    }
+
+    #[test]
+    fn a_session_under_the_floor_is_never_flagged_in_the_tui_either() {
+        let _guard = env_guard();
+        sandbox("unaccounted-floor");
+        seed(vec![entry(0, "first")], 1);
+        let mut app = seed_marks(&[]);
+
+        let dir = activity_sandbox();
+        write_session(&dir, "sess-1", "smoke", 1); // under the 120-minute floor
+        app.activity_stamp = None;
+        app.sync_from_activity();
+
+        assert!(app.unaccounted.is_empty());
+        app.toggle_marks();
+        assert_eq!(
+            app.marks_surface_height(),
+            3,
+            "no unaccounted section when nothing is flagged"
+        );
+    }
+
+    #[test]
+    fn a_covering_mark_clears_the_unaccounted_flag_in_the_tui() {
+        let _guard = env_guard();
+        sandbox("unaccounted-covered");
+        seed(vec![entry(0, "first")], 1);
+        let mark_dir = mark_sandbox();
+        begin_mark(&mark_dir, "smoke.-.impl", 4 * 60); // started before the window
+
+        let activity_dir = activity_sandbox();
+        write_session(&activity_dir, "sess-1", "smoke", 3);
+
+        let mut app = App::new().unwrap();
+        app.activity_stamp = None;
+        app.sync_from_activity();
+
+        assert!(
+            app.unaccounted.is_empty(),
+            "an overlapping open mark for the same project must cover it"
+        );
+    }
+
+    #[test]
+    fn the_surface_caps_visible_unaccounted_windows_and_counts_the_rest() {
+        let _guard = env_guard();
+        sandbox("unaccounted-cap");
+        seed(vec![entry(0, "first")], 1);
+        let mut app = seed_marks(&[]);
+
+        let dir = activity_sandbox();
+        for (n, project) in [(1, "a"), (2, "b"), (3, "c"), (4, "d")] {
+            write_session(&dir, &format!("sess-{n}"), project, 3);
+        }
+        app.activity_stamp = None;
+        app.sync_from_activity();
+
+        assert_eq!(app.unaccounted.len(), 4);
+        assert_eq!(app.visible_unaccounted().len(), 3, "capped at three shown");
+        assert_eq!(app.unaccounted_count().as_deref(), Some("3/4"));
+    }
+
     #[test]
     fn toggling_the_marks_surface_leaves_focus_and_the_table_alone() {
         let _guard = env_guard();
@@ -1673,7 +1796,10 @@ mod tests {
 
         app.next_period();
 
-        assert_eq!(app.selected_date, NaiveDate::from_ymd_opt(2025, 2, 28).unwrap());
+        assert_eq!(
+            app.selected_date,
+            NaiveDate::from_ymd_opt(2025, 2, 28).unwrap()
+        );
     }
 
     #[test]
@@ -1894,6 +2020,47 @@ mod tests {
     }
 
     #[test]
+    fn the_agents_panel_renders_the_unaccounted_section_when_flagged() {
+        let _guard = env_guard();
+        sandbox("unaccounted-render");
+        seed(vec![entry(0, "first")], 1);
+        let mut app = seed_marks(&[("tt.14.impl", 2)]);
+        app.toggle_marks();
+
+        let dir = activity_sandbox();
+        write_session(&dir, "sess-1", "smoke-project", 3);
+        app.activity_stamp = None;
+        app.sync_from_activity();
+
+        let screen = frame_lines(&mut app, 100, 30).join("\n");
+        assert!(
+            screen.contains("unaccounted activity"),
+            "the header should appear once something is flagged:\n{screen}"
+        );
+        assert!(
+            screen.contains("smoke-project"),
+            "the flagged project should be named:\n{screen}"
+        );
+        // The marks section is untouched by the addition.
+        assert!(screen.contains("tt/14"));
+    }
+
+    #[test]
+    fn the_agents_panel_has_no_unaccounted_section_when_nothing_is_flagged() {
+        let _guard = env_guard();
+        sandbox("unaccounted-render-empty");
+        seed(vec![entry(0, "first")], 1);
+        let mut app = seed_marks(&[("tt.14.impl", 2)]);
+        app.toggle_marks();
+
+        let screen = frame_lines(&mut app, 100, 30).join("\n");
+        assert!(
+            !screen.contains("unaccounted"),
+            "a clean session must render exactly as it did before:\n{screen}"
+        );
+    }
+
+    #[test]
     fn the_status_bar_shows_an_update_notice_when_one_is_set() {
         let _guard = env_guard();
         sandbox("update-notice-render");
@@ -1928,9 +2095,30 @@ mod tests {
         sandbox("overview-render");
         seed(
             vec![
-                logged(1, "a", "tt", &["impl"], NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(), 30),
-                logged(2, "b", "tt", &["impl"], NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(), 300),
-                logged(3, "c", "tt", &["impl"], NaiveDate::from_ymd_opt(2026, 12, 20).unwrap(), 120),
+                logged(
+                    1,
+                    "a",
+                    "tt",
+                    &["impl"],
+                    NaiveDate::from_ymd_opt(2026, 1, 5).unwrap(),
+                    30,
+                ),
+                logged(
+                    2,
+                    "b",
+                    "tt",
+                    &["impl"],
+                    NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+                    300,
+                ),
+                logged(
+                    3,
+                    "c",
+                    "tt",
+                    &["impl"],
+                    NaiveDate::from_ymd_opt(2026, 12, 20).unwrap(),
+                    120,
+                ),
             ],
             4,
         );
@@ -1942,7 +2130,10 @@ mod tests {
         let screen = frame_lines(&mut app, 140, 24).join("\n");
 
         assert!(screen.contains("Overview"), "tab title shows the new view");
-        assert!(screen.contains("Year 2026"), "date_info names the shown year");
+        assert!(
+            screen.contains("Year 2026"),
+            "date_info names the shown year"
+        );
         assert!(
             screen.contains("Mon") && screen.contains("Sun"),
             "all seven weekday labels render:\n{screen}"

@@ -1,5 +1,8 @@
-use std::collections::HashMap;
-use std::rc::Rc;
+use super::types::{
+    ConfirmAction, InputField, InputMode, LayoutSurface, OnboardingStep, Pane, ViewMode,
+};
+use super::{App, theme};
+use crate::tracker::TimeData;
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use ratatui::{
     prelude::*,
@@ -8,9 +11,8 @@ use ratatui::{
         Tabs,
     },
 };
-use crate::tracker::TimeData;
-use super::{theme, App};
-use super::types::{ConfirmAction, InputField, InputMode, LayoutSurface, OnboardingStep, Pane, ViewMode};
+use std::collections::HashMap;
+use std::rc::Rc;
 
 /// The cursor row marker for every list that has one. One constant, so a list's
 /// reserved width can never be out of step with what gets drawn.
@@ -121,7 +123,10 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     let mut status_spans = vec![Span::styled(status_text, status_style)];
     if let Some(version) = &app.update_notice {
         status_spans.push(Span::styled(
-            format!(" | tt {version} available — run `{}`", crate::update::update_hint()),
+            format!(
+                " | tt {version} available — run `{}`",
+                crate::update::update_hint()
+            ),
             Style::default().fg(theme::highlight()),
         ));
     }
@@ -129,7 +134,10 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::border()))
-            .title(Span::styled(" Status ", Style::default().fg(theme::title()))),
+            .title(Span::styled(
+                " Status ",
+                Style::default().fg(theme::title()),
+            )),
     );
     f.render_widget(header, rows.area(LayoutRow::Status));
 
@@ -171,7 +179,12 @@ pub fn ui(f: &mut Frame, app: &mut App) {
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme::border()))
                 .title(Span::styled(
-                    format!(" {} | {} | {} ", app.view_mode.title(), date_info, app.sort_order.label()),
+                    format!(
+                        " {} | {} | {} ",
+                        app.view_mode.title(),
+                        date_info,
+                        app.sort_order.label()
+                    ),
                     Style::default().fg(theme::highlight()),
                 )),
         );
@@ -234,11 +247,17 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     let hints_width = footer_inner.width.saturating_sub(KEYS_WIDTH);
     let footer_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(hints_width), Constraint::Length(KEYS_WIDTH)])
+        .constraints([
+            Constraint::Length(hints_width),
+            Constraint::Length(KEYS_WIDTH),
+        ])
         .split(footer_inner);
 
     let hint_spans = vec![
-        Span::styled(format!(" {}", total_label), Style::default().fg(theme::title())),
+        Span::styled(
+            format!(" {}", total_label),
+            Style::default().fg(theme::title()),
+        ),
         Span::styled(total_str, Style::default().fg(theme::highlight()).bold()),
         Span::styled(" | ", Style::default().fg(theme::border())),
         // Detail goes first; this zone clips from the right at 80 columns.
@@ -361,7 +380,10 @@ pub fn render_help_popup(f: &mut Frame) {
         Span::styled(s, Style::default().fg(theme::inactive()))
     }
     fn heading(s: &'static str) -> Line<'static> {
-        Line::from(Span::styled(s, Style::default().fg(theme::highlight()).bold()))
+        Line::from(Span::styled(
+            s,
+            Style::default().fg(theme::highlight()).bold(),
+        ))
     }
 
     let lines: Vec<Line> = vec![
@@ -371,12 +393,21 @@ pub fn render_help_popup(f: &mut Frame) {
         Line::from(vec![key("  j / ↓"), sep("  select next entry")]),
         Line::from(vec![key("  k / ↑"), sep("  select previous entry")]),
         Line::from(vec![key("  t"), sep("        go to today")]),
-        Line::from(vec![key("  1 / 2 / 3 / 4"), sep("  day / week / all / overview")]),
+        Line::from(vec![
+            key("  1 / 2 / 3 / 4"),
+            sep("  day / week / all / overview"),
+        ]),
         Line::from(Span::raw("")),
         heading("  Entries"),
-        Line::from(vec![key("  a"), sep("        add entry (uses browsed date)")]),
+        Line::from(vec![
+            key("  a"),
+            sep("        add entry (uses browsed date)"),
+        ]),
         Line::from(vec![key("  e"), sep("        edit selected entry")]),
-        Line::from(vec![key("  d"), sep("        delete selected entry (asks first)")]),
+        Line::from(vec![
+            key("  d"),
+            sep("        delete selected entry (asks first)"),
+        ]),
         Line::from(vec![key("  s"), sep("        stop active entry")]),
         Line::from(vec![key("  Enter"), sep("    entry detail")]),
         // A path, not a key: the trim is live only while the popover is open.
@@ -479,7 +510,11 @@ fn render_onboarding_layout_step(f: &mut Frame, app: &App) {
         Line::from(Span::raw("")),
     ];
     for (i, surface) in LayoutSurface::ALL.iter().enumerate() {
-        let cursor = if i == app.onboarding_cursor { " ▸ " } else { "   " };
+        let cursor = if i == app.onboarding_cursor {
+            " ▸ "
+        } else {
+            "   "
+        };
         let checked = app.onboarding_is_checked(*surface);
         let box_glyph = if checked { "◉" } else { "○" };
         let (glyph, blurb) = surface_blurb(*surface);
@@ -492,7 +527,10 @@ fn render_onboarding_layout_step(f: &mut Frame, app: &App) {
         };
         lines.push(Line::from(vec![
             Span::styled(cursor, Style::default().fg(theme::accent()).bold()),
-            Span::styled(format!("{box_glyph} {} {glyph} ", surface.label()), row_style),
+            Span::styled(
+                format!("{box_glyph} {} {glyph} ", surface.label()),
+                row_style,
+            ),
             Span::styled(blurb, Style::default().fg(theme::inactive())),
         ]));
         lines.push(Line::from(vec![
@@ -510,7 +548,10 @@ fn render_onboarding_layout_step(f: &mut Frame, app: &App) {
         f,
         58,
         lines.len() as u16 + 3,
-        Span::styled(" Welcome (1/2) ", Style::default().fg(theme::highlight()).bold()),
+        Span::styled(
+            " Welcome (1/2) ",
+            Style::default().fg(theme::highlight()).bold(),
+        ),
         Span::styled(" setup ", Style::default().fg(theme::inactive())),
         overlay_hints(&[
             ("j/k", "move"),
@@ -580,7 +621,10 @@ fn render_onboarding_skill_step(f: &mut Frame, app: &App) {
         f,
         58,
         lines.len() as u16 + 3,
-        Span::styled(" Welcome (2/2) ", Style::default().fg(theme::highlight()).bold()),
+        Span::styled(
+            " Welcome (2/2) ",
+            Style::default().fg(theme::highlight()).bold(),
+        ),
         Span::styled(" setup ", Style::default().fg(theme::inactive())),
         overlay_hints(&[("y", "install"), ("n / enter", "skip"), ("esc", "skip all")]),
     );
@@ -843,6 +887,24 @@ fn render_marks_surface(f: &mut Frame, app: &App, area: Rect) {
             .collect()
     };
 
+    let mut lines = lines;
+    if !app.unaccounted.is_empty() {
+        let header = match app.unaccounted_count() {
+            Some(count) => format!(" ⚠ unaccounted activity ({count})"),
+            None => " ⚠ unaccounted activity".to_string(),
+        };
+        lines.push(Line::from(Span::styled(
+            header,
+            Style::default().fg(theme::inactive()).italic(),
+        )));
+        for item in app.visible_unaccounted() {
+            lines.push(Line::from(Span::styled(
+                format!(" {}", item.describe()),
+                Style::default().fg(theme::highlight()),
+            )));
+        }
+    }
+
     f.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -1056,7 +1118,12 @@ fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(search_input, area);
 
     if is_active {
-        let byte_idx = app.search_term.char_indices().nth(app.cursor_pos).map(|(i, _)| i).unwrap_or(app.search_term.len());
+        let byte_idx = app
+            .search_term
+            .char_indices()
+            .nth(app.cursor_pos)
+            .map(|(i, _)| i)
+            .unwrap_or(app.search_term.len());
         f.set_cursor_position((
             area.x + Line::from(&app.search_term[..byte_idx]).width() as u16 + 1,
             area.y + 1,
@@ -1073,7 +1140,10 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         if app.selected_date == today {
             " Add Log Entry ".to_string()
         } else {
-            format!(" Add Log Entry — {} ", app.selected_date.format("%a, %d %b %Y"))
+            format!(
+                " Add Log Entry — {} ",
+                app.selected_date.format("%a, %d %b %Y")
+            )
         }
     };
 
@@ -1115,7 +1185,10 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(
         Paragraph::new(app.input_description.as_str())
             .style(Style::default().fg(Color::White))
-            .block(field_block(" Description ", active == InputField::Description)),
+            .block(field_block(
+                " Description ",
+                active == InputField::Description,
+            )),
         chunks[0],
     );
     f.render_widget(
@@ -1130,25 +1203,37 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(
         Paragraph::new(app.input_tags.as_str())
             .style(Style::default().fg(Color::White))
-            .block(field_block(" Tags (space-separated, e.g., work meeting) ", active == InputField::Tags)),
+            .block(field_block(
+                " Tags (space-separated, e.g., work meeting) ",
+                active == InputField::Tags,
+            )),
         chunks[2],
     );
     f.render_widget(
         Paragraph::new(app.input_duration.as_str())
             .style(Style::default().fg(Color::White))
-            .block(field_block(" Duration (optional: 1h30m, 45m, 2h) ", active == InputField::Duration)),
+            .block(field_block(
+                " Duration (optional: 1h30m, 45m, 2h) ",
+                active == InputField::Duration,
+            )),
         chunks[3],
     );
     f.render_widget(
         Paragraph::new(app.input_start_time.as_str())
             .style(Style::default().fg(Color::White))
-            .block(field_block(" Start Time (e.g. 9am, 14:30, 25/03 9.30am) ", active == InputField::StartTime)),
+            .block(field_block(
+                " Start Time (e.g. 9am, 14:30, 25/03 9.30am) ",
+                active == InputField::StartTime,
+            )),
         chunks[4],
     );
     f.render_widget(
         Paragraph::new(app.input_end_time.as_str())
             .style(Style::default().fg(Color::White))
-            .block(field_block(" End Time (optional: e.g. 9am, 14:30, 25/03 9.30am) ", active == InputField::EndTime)),
+            .block(field_block(
+                " End Time (optional: e.g. 9am, 14:30, 25/03 9.30am) ",
+                active == InputField::EndTime,
+            )),
         chunks[5],
     );
 
@@ -1159,18 +1244,28 @@ fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(": save | ", Style::default().fg(theme::inactive())),
         Span::styled("Esc", Style::default().fg(theme::accent())),
         Span::styled(": cancel  ", Style::default().fg(theme::inactive())),
-        Span::styled("Need ≥2 of: Start, End, Duration", Style::default().fg(theme::border())),
+        Span::styled(
+            "Need ≥2 of: Start, End, Duration",
+            Style::default().fg(theme::border()),
+        ),
     ]))
     .block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::border()))
-            .title(Span::styled(form_title, Style::default().fg(theme::highlight()))),
+            .title(Span::styled(
+                form_title,
+                Style::default().fg(theme::highlight()),
+            )),
     );
     f.render_widget(help, chunks[6]);
 
     let cursor_text_width = |text: &str, pos: usize| -> u16 {
-        let byte_idx = text.char_indices().nth(pos).map(|(i, _)| i).unwrap_or(text.len());
+        let byte_idx = text
+            .char_indices()
+            .nth(pos)
+            .map(|(i, _)| i)
+            .unwrap_or(text.len());
         Line::from(&text[..byte_idx]).width() as u16
     };
     let (cursor_x, cursor_y) = match app.input_field {
@@ -1213,7 +1308,8 @@ fn render_overview(f: &mut Frame, app: &App, area: Rect) {
     let today = Local::now().date_naive();
 
     let grid_start = TimeData::week_start(NaiveDate::from_ymd_opt(year, 1, 1).unwrap());
-    let grid_end = TimeData::week_start(NaiveDate::from_ymd_opt(year, 12, 31).unwrap()) + Duration::days(6);
+    let grid_end =
+        TimeData::week_start(NaiveDate::from_ymd_opt(year, 12, 31).unwrap()) + Duration::days(6);
     let total_weeks = ((grid_end - grid_start).num_days() / 7 + 1) as usize;
 
     // Show only as many of the most recent weeks as fit the available width,
@@ -1269,10 +1365,22 @@ fn render_overview(f: &mut Frame, app: &App, area: Rect) {
         Span::raw(" ".repeat(GUTTER)),
         Span::styled("Less ", Style::default().fg(theme::inactive())),
     ];
-    for hours in [0, 1, t.day_duration_med_h / 2, t.day_duration_med_h, t.day_duration_high_h] {
-        legend_spans.push(Span::styled("  ", Style::default().bg(theme::heat_color(hours))));
+    for hours in [
+        0,
+        1,
+        t.day_duration_med_h / 2,
+        t.day_duration_med_h,
+        t.day_duration_high_h,
+    ] {
+        legend_spans.push(Span::styled(
+            "  ",
+            Style::default().bg(theme::heat_color(hours)),
+        ));
     }
-    legend_spans.push(Span::styled(" More", Style::default().fg(theme::inactive())));
+    legend_spans.push(Span::styled(
+        " More",
+        Style::default().fg(theme::inactive()),
+    ));
     lines.push(Line::from(""));
     lines.push(Line::from(legend_spans));
 
@@ -1345,7 +1453,10 @@ fn render_weekly_breakdown(f: &mut Frame, app: &App, area: Rect) {
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(theme::border()))
-            .title(Span::styled(" Daily Totals ", Style::default().fg(theme::title()))),
+            .title(Span::styled(
+                " Daily Totals ",
+                Style::default().fg(theme::title()),
+            )),
     );
     f.render_widget(table, area);
 }
@@ -1409,63 +1520,70 @@ fn day_header_row(date: NaiveDate, total: Duration) -> Row<'static> {
 }
 
 fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
-    let header_cells = ["Date", "Start", "End", "Description", "Tags", "Duration", ""]
-        .into_iter()
-        .map(|h| {
-            Cell::from(h).style(
-                Style::default()
-                    .fg(theme::accent())
-                    .add_modifier(Modifier::BOLD),
-            )
-        });
+    let header_cells = [
+        "Date",
+        "Start",
+        "End",
+        "Description",
+        "Tags",
+        "Duration",
+        "",
+    ]
+    .into_iter()
+    .map(|h| {
+        Cell::from(h).style(
+            Style::default()
+                .fg(theme::accent())
+                .add_modifier(Modifier::BOLD),
+        )
+    });
     let header_row = Row::new(header_cells)
         .height(1)
         .style(Style::default().bg(theme::header_bg()));
 
     let entries = app.filtered_entries();
 
-    let (rows, visual_selected): (Vec<Row>, Option<usize>) =
-        if app.view_mode == ViewMode::Week {
-            let mut day_totals: HashMap<NaiveDate, Duration> = HashMap::new();
-            for entry in &entries {
-                let date = entry.start_time.date_naive();
-                *day_totals.entry(date).or_insert_with(Duration::zero) += entry.duration();
+    let (rows, visual_selected): (Vec<Row>, Option<usize>) = if app.view_mode == ViewMode::Week {
+        let mut day_totals: HashMap<NaiveDate, Duration> = HashMap::new();
+        for entry in &entries {
+            let date = entry.start_time.date_naive();
+            *day_totals.entry(date).or_insert_with(Duration::zero) += entry.duration();
+        }
+
+        let mut rows: Vec<Row> = Vec::new();
+        let mut visual_idx_map: Vec<usize> = Vec::with_capacity(entries.len());
+        let mut current_date: Option<NaiveDate> = None;
+        let mut stripe = false;
+
+        for entry in entries.iter() {
+            let entry_date = entry.start_time.date_naive();
+            if current_date != Some(entry_date) {
+                current_date = Some(entry_date);
+                stripe = false;
+                let total = day_totals
+                    .get(&entry_date)
+                    .copied()
+                    .unwrap_or_else(Duration::zero);
+                rows.push(day_header_row(entry_date, total));
             }
+            visual_idx_map.push(rows.len());
+            rows.push(entry_row(entry, stripe));
+            stripe = !stripe;
+        }
 
-            let mut rows: Vec<Row> = Vec::new();
-            let mut visual_idx_map: Vec<usize> = Vec::with_capacity(entries.len());
-            let mut current_date: Option<NaiveDate> = None;
-            let mut stripe = false;
-
-            for entry in entries.iter() {
-                let entry_date = entry.start_time.date_naive();
-                if current_date != Some(entry_date) {
-                    current_date = Some(entry_date);
-                    stripe = false;
-                    let total = day_totals
-                        .get(&entry_date)
-                        .copied()
-                        .unwrap_or_else(Duration::zero);
-                    rows.push(day_header_row(entry_date, total));
-                }
-                visual_idx_map.push(rows.len());
-                rows.push(entry_row(entry, stripe));
-                stripe = !stripe;
-            }
-
-            let visual_sel = app
-                .table_state
-                .selected()
-                .and_then(|idx| visual_idx_map.get(idx).copied());
-            (rows, visual_sel)
-        } else {
-            let rows = entries
-                .iter()
-                .enumerate()
-                .map(|(i, entry)| entry_row(entry, i % 2 != 0))
-                .collect();
-            (rows, app.table_state.selected())
-        };
+        let visual_sel = app
+            .table_state
+            .selected()
+            .and_then(|idx| visual_idx_map.get(idx).copied());
+        (rows, visual_sel)
+    } else {
+        let rows = entries
+            .iter()
+            .enumerate()
+            .map(|(i, entry)| entry_row(entry, i % 2 != 0))
+            .collect();
+        (rows, app.table_state.selected())
+    };
 
     // `(tt)` and `#impl`, the CLI's own sigils, so the title needs no legend.
     let title = if app.is_filtering() {
