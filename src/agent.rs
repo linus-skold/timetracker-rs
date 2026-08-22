@@ -90,6 +90,32 @@ fn activity_command(command: &ActivityCommands) -> Result<()> {
         } => activity::begin_in(&dir, session_id, project.as_deref())?,
         ActivityCommands::End { session_id } => activity::end_in(&dir, session_id)?,
         ActivityCommands::Subagent { session_id } => activity::subagent_in(&dir, session_id)?,
+        ActivityCommands::Check { session_id } => return check_session(&dir, session_id),
+    }
+    Ok(())
+}
+
+/// `tt agent activity check <session_id>`: the same reconciliation as
+/// `tt agent audit`, narrowed to one session, so the `Stop` hook can warn
+/// immediately rather than waiting for the next `audit` run. Silent when the
+/// session is accounted for, unknown, or has no resolved project.
+fn check_session(dir: &std::path::Path, session_id: &str) -> Result<()> {
+    let Some(session) = activity::read_session_in(dir, session_id) else {
+        return Ok(());
+    };
+    let marks = marks::open_marks();
+    let mut data = storage::load_data()?;
+    tracker::migrate(&mut data);
+
+    let flagged = audit::unaccounted(
+        &[session],
+        &marks,
+        &data.entries,
+        chrono::Local::now(),
+        max_unvouched_minutes(),
+    );
+    for item in &flagged {
+        println!("{}", unaccounted_row(item));
     }
     Ok(())
 }
@@ -213,20 +239,26 @@ fn run_audit() -> Result<()> {
 
     println!("{} Unaccounted agent activity:\n", icons::warning());
     for item in &flagged {
-        let subagents = match item.subagents {
-            0 => String::new(),
-            1 => ", 1 subagent dispatch".to_string(),
-            n => format!(", {n} subagent dispatches"),
-        };
-        println!(
-            "  {} - since {} ({}{})",
-            item.project,
-            item.start.format("%H:%M"),
-            duration::format(item.end.signed_duration_since(item.start)),
-            subagents
-        );
+        println!("  {}", unaccounted_row(item));
     }
     Ok(())
+}
+
+/// `<project> - since HH:MM (Xh Ym)`, with a trailing subagent-dispatch count
+/// when there were any. Shared by `tt agent audit` and `tt agent activity check`.
+fn unaccounted_row(item: &audit::Unaccounted) -> String {
+    let subagents = match item.subagents {
+        0 => String::new(),
+        1 => ", 1 subagent dispatch".to_string(),
+        n => format!(", {n} subagent dispatches"),
+    };
+    format!(
+        "{} - since {} ({}{})",
+        item.project,
+        item.start.format("%H:%M"),
+        duration::format(item.end.signed_duration_since(item.start)),
+        subagents
+    )
 }
 
 /// `tt agent item <project> <issue|-> <phase> <summary> <minutes>`: log one
