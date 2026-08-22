@@ -185,6 +185,9 @@ pub enum AgentCommands {
     /// model. See docs/decisions/0001-agent-activity-tracking.md.
     #[command(hide = true, subcommand)]
     Activity(ActivityCommands),
+    /// Reconcile the activity ledger against marks and logged entries,
+    /// reporting activity with no evidence it was ever tracked.
+    Audit,
 }
 
 /// See [`AgentCommands::Activity`]. Keyed by Claude Code's own session id.
@@ -212,7 +215,8 @@ impl AgentCommands {
             | AgentCommands::Touch { .. }
             | AgentCommands::Cancel { .. }
             | AgentCommands::List
-            | AgentCommands::Activity(_) => false,
+            | AgentCommands::Activity(_)
+            | AgentCommands::Audit => false,
             AgentCommands::Item { .. } | AgentCommands::End { .. } => true,
         }
     }
