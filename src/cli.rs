@@ -181,28 +181,23 @@ pub enum AgentCommands {
         #[arg(long)]
         trim: bool,
     },
-    /// The hook-only activity ledger, hidden from `--help`: written by
-    /// Claude Code's SessionStart/Stop/SubagentStop hooks, never by an
-    /// agent's own judgment. See docs/decisions/0001-agent-activity-tracking.md.
+    /// Hook-only activity ledger, hidden from `--help` — never called by the
+    /// model. See docs/decisions/0001-agent-activity-tracking.md.
     #[command(hide = true, subcommand)]
     Activity(ActivityCommands),
 }
 
-/// See [`AgentCommands::Activity`]. Each hook invocation names the harness's
-/// own session id, the one stable key across a SessionStart/Stop pair.
+/// See [`AgentCommands::Activity`]. Keyed by Claude Code's own session id.
 #[derive(Subcommand)]
 pub enum ActivityCommands {
     /// SessionStart: open this session's activity window.
     Begin {
         session_id: String,
-        /// Resolved the same way the skill resolves it: `$TT_PROJECT`, else
-        /// the repo directory name, else omitted.
         project: Option<String>,
     },
     /// Stop: close this session's activity window.
     End { session_id: String },
-    /// SubagentStop: record that one subagent dispatch finished during this
-    /// session's window.
+    /// SubagentStop: record that one subagent dispatch finished.
     Subagent { session_id: String },
 }
 

@@ -2,34 +2,23 @@
 // Claude-Code-specific enforcement for the tt-time-logging skill.
 //
 // `npx skills add` only copies SKILL.md (and this directory) into place — it
-// is tool-agnostic and knows nothing about Claude Code's hooks. Prose in a
-// skill is model-invoked and gets skipped under context pressure, so this
-// script wires hooks into the user's *global* ~/.claude/settings.json — not a
-// project-local one, since the whole point is that they fire in every
-// session, in every project, not just the one the skill happened to be
-// installed into:
+// knows nothing about Claude Code's hooks, and prose alone gets skipped under
+// context pressure. This script wires hooks into the user's *global*
+// ~/.claude/settings.json (not project-local, since they must fire in every
+// session):
 //
-//   SessionStart - injects this skill's contract into every session's
-//                  context directly, unconditionally (no model judgment);
-//                  also opens this session's `tt agent activity` window.
-//   Stop         - runs `tt agent list` and warns (non-blocking) if this
-//                  project has marks still open when the agent stops; also
-//                  closes this session's `tt agent activity` window.
-//   SubagentStop - records that one subagent dispatch finished during this
-//                  session's activity window.
+//   SessionStart - injects this skill's contract; opens the activity window.
+//   Stop         - warns about open marks; closes the activity window.
+//   SubagentStop - records a subagent dispatch on the activity window.
 //
-// The activity-ledger hooks are a second, model-independent signal that a
-// session was active at all, reconciled against marks separately from this
-// contract — see docs/decisions/0001-agent-activity-tracking.md in the
-// timetracker-rs source repo. Each invocation is keyed by Claude Code's own
-// `session_id`, read from the hook's JSON payload on stdin — the one id
-// stable across a SessionStart/Stop pair.
+// The activity ledger is a second, model-independent signal that a session
+// was active — see docs/decisions/0001-agent-activity-tracking.md. Keyed by
+// Claude Code's own `session_id`, read off the hook's stdin JSON.
 //
-// All hook commands reference absolute paths under ~/.claude/hooks/, not
-// paths relative to whatever cwd Claude Code happens to invoke hooks with —
-// a relative path silently fails to resolve on at least Windows.
+// All hook commands use absolute paths under ~/.claude/hooks/ — relative
+// paths silently fail to resolve on at least Windows.
 //
-// Safe to re-run: both entries are added only if not already present.
+// Safe to re-run: entries are added only if not already present.
 //
 // Usage (from anywhere, after `npx skills add ...`):
 //   node <wherever the skill landed>/scripts/install-hooks.mjs

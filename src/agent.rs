@@ -72,9 +72,8 @@ pub fn run(command: &AgentCommands) -> Result<()> {
     }
 }
 
-/// The activity directory, silently doing nothing if it cannot be resolved —
-/// a hook must never fail the harness event it is attached to over a missing
-/// home directory.
+/// Silently does nothing if the activity dir can't be resolved — a hook must
+/// never fail the harness event it's attached to.
 fn activity_command(command: &ActivityCommands) -> Result<()> {
     let Some(dir) = activity::activity_dir() else {
         return Ok(());

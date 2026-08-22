@@ -1,18 +1,14 @@
 #!/usr/bin/env node
 // SessionStart/Stop/SubagentStop hook: writes to `tt`'s hook-only activity
-// ledger (`tt agent activity …`), a second, model-independent signal that a
-// session was active — see
-// docs/decisions/0001-agent-activity-tracking.md in the timetracker-rs
-// source repo. Installed by install-hooks.mjs.
+// ledger (`tt agent activity …`) — see
+// docs/decisions/0001-agent-activity-tracking.md. Installed by
+// install-hooks.mjs.
 //
 // Usage: node tt-activity-hook.mjs <begin|end|subagent>
 //
-// The event name maps straight onto the `tt agent activity` subcommand.
-// Claude Code passes the hook's JSON payload on stdin; `session_id` there is
-// the one id stable across a SessionStart/Stop pair for one session, so it is
-// the key every activity entry is filed under. A payload that cannot be read
-// or parsed, or carries no `session_id`, is silently skipped — a hook must
-// never fail the harness event it is attached to.
+// `session_id` (read from the hook's JSON payload on stdin) is the key every
+// entry is filed under. Missing or unparseable payload: silently skipped —
+// a hook must never fail the harness event it's attached to.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -65,9 +61,7 @@ if (event === "begin") {
 try {
   execFileSync("tt", args, { stdio: "ignore" });
 } catch {
-  // A hook must never fail the harness event over `tt` being missing or
-  // erroring — the SessionStart/Stop contract itself already warns about
-  // that separately.
+  // never fail the harness event over `tt` being missing or erroring
 }
 
 process.stdout.write("{}");

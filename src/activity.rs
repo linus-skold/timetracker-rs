@@ -1,18 +1,10 @@
 //! Reader and writer for the hook-only activity ledger.
 //!
 //! Alongside `marks/`, `activity/` holds one file per Claude Code session,
-//! keyed by the harness's own session id — never a phase, an issue, or a
-//! project's own choice of anything. It is written only by the
-//! `SessionStart`/`Stop`/`SubagentStop` hooks (see
-//! `skills/tt-time-logging/scripts/`), never by the agent's own judgment, so
-//! its presence proves a session was active regardless of whether the model
-//! ever called `tt agent begin`. See
-//! `docs/decisions/0001-agent-activity-tracking.md` for why this exists
-//! alongside marks rather than replacing them.
-//!
-//! An entry carries no phase, no issue, no summary — just a start, an
-//! optional end, and every subagent dispatch that finished during the
-//! session. That is all a hook can know without the model's judgment.
+//! keyed by the harness's own session id. Written only by hooks (see
+//! `skills/tt-time-logging/scripts/`), never by the model, so its presence
+//! proves a session was active even if `tt agent begin` was never called.
+//! See `docs/decisions/0001-agent-activity-tracking.md`.
 
 use chrono::Local;
 use std::ffi::OsString;
@@ -20,21 +12,18 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-/// The directory activity entries live in: `$TT_ACTIVITY_DIR` when set and
-/// non-empty, else `activity` inside this app's cache directory — a sibling of
-/// `marks`. `None` only when there is no home directory to resolve.
+/// `$TT_ACTIVITY_DIR` when set, else `activity` inside the cache dir —
+/// a sibling of `marks`.
 pub fn activity_dir() -> Option<PathBuf> {
     resolve_activity_dir(std::env::var_os("TT_ACTIVITY_DIR"), cache_dir())
 }
 
-/// Same cache root [`crate::marks::mark_dir`] resolves from, so a sandboxed
-/// `HOME` redirects activity entries the same way it redirects marks.
+/// Same cache root [`crate::marks::mark_dir`] resolves from.
 fn cache_dir() -> Option<PathBuf> {
     let dirs = directories::ProjectDirs::from("com", "timetracker", "tt")?;
     Some(dirs.cache_dir().to_path_buf())
 }
 
-/// The env-free half of [`activity_dir`], taking the resolved cache root.
 fn resolve_activity_dir(activity_dir: Option<OsString>, cache: Option<PathBuf>) -> Option<PathBuf> {
     match activity_dir {
         Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
@@ -42,9 +31,7 @@ fn resolve_activity_dir(activity_dir: Option<OsString>, cache: Option<PathBuf>) 
     }
 }
 
-/// The sanitised filename for one session: `session_id` with every character
-/// outside `[A-Za-z0-9._-]` replaced by `_`, the same rule [`crate::marks`]
-/// applies to a mark's key.
+/// Sanitised the same way [`crate::marks::mark_key`] sanitises a mark's key.
 fn session_key(session_id: &str) -> String {
     session_id
         .chars()
@@ -62,10 +49,8 @@ fn session_path(dir: &Path, session_id: &str) -> PathBuf {
     dir.join(session_key(session_id))
 }
 
-/// `SessionStart`: open this session's activity window, holding its start
-/// epoch and resolved project. Idempotent — an existing file for this session
-/// id is left byte-identical, so a hook that fires twice for one id never
-/// overwrites the real start.
+/// `SessionStart`: open this session's window. Idempotent — an existing file
+/// is left untouched, so a hook firing twice never overwrites the real start.
 pub fn begin_in(dir: &Path, session_id: &str, project: Option<&str>) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     let path = session_path(dir, session_id);
@@ -81,19 +66,14 @@ pub fn begin_in(dir: &Path, session_id: &str, project: Option<&str>) -> io::Resu
     Ok(())
 }
 
-/// `Stop`: append this session's end epoch. Appended, never overwritten, so a
-/// `Stop` that fires more than once records every close rather than losing
-/// the first. The file is created bare if `Stop` somehow fires with no prior
-/// `begin_in` — e.g. the hook was installed mid-session — so an end is never
-/// lost for want of a start.
+/// `Stop`: append this session's end epoch. A missing session file is
+/// created bare, so an end is never lost for want of a prior `begin_in`.
 pub fn end_in(dir: &Path, session_id: &str) -> io::Result<()> {
     append_field(dir, session_id, "end")
 }
 
-/// `SubagentStop`: append a marker that one subagent dispatch finished during
-/// this session's window. Carries no start of its own — `SubagentStop` alone
-/// cannot know when its dispatch began — so this is evidence a dispatch
-/// happened, not a nested window with its own span.
+/// `SubagentStop`: mark that one subagent dispatch finished. No start of its
+/// own — just evidence a dispatch happened, not a windowed span.
 pub fn subagent_in(dir: &Path, session_id: &str) -> io::Result<()> {
     append_field(dir, session_id, "subagent")
 }
