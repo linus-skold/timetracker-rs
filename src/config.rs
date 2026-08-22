@@ -126,7 +126,10 @@ pub fn load() -> Config {
             general: raw.general.unwrap_or_default(),
         },
         Err(e) => {
-            eprintln!("Warning: failed to load config from {}: {e:#}", path.display());
+            eprintln!(
+                "Warning: failed to load config from {}: {e:#}",
+                path.display()
+            );
             Config::default()
         }
     }
@@ -146,7 +149,11 @@ fn resolve_config_path(config_file: Option<OsString>, default: Option<PathBuf>) 
 
 #[cfg(windows)]
 fn default_config_path() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|dir| PathBuf::from(dir).join("timetracker-rs").join("config.toml"))
+    std::env::var_os("APPDATA").map(|dir| {
+        PathBuf::from(dir)
+            .join("timetracker-rs")
+            .join("config.toml")
+    })
 }
 
 #[cfg(not(windows))]
@@ -165,7 +172,8 @@ fn load_raw(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<RawConfig> {
         anyhow::bail!("circular include chain at {}", path.display());
     }
 
-    let text = fs::read_to_string(path).with_context(|| format!("reading config file {}", path.display()))?;
+    let text = fs::read_to_string(path)
+        .with_context(|| format!("reading config file {}", path.display()))?;
     let raw: RawConfig =
         toml::from_str(&text).with_context(|| format!("parsing config file {}", path.display()))?;
 
@@ -174,8 +182,13 @@ fn load_raw(path: &Path, visited: &mut HashSet<PathBuf>) -> Result<RawConfig> {
     };
 
     let include_path = resolve_include_path(&include, path);
-    let base = load_raw(&include_path, visited)
-        .with_context(|| format!("including {} from {}", include_path.display(), path.display()))?;
+    let base = load_raw(&include_path, visited).with_context(|| {
+        format!(
+            "including {} from {}",
+            include_path.display(),
+            path.display()
+        )
+    })?;
     Ok(merge_raw(base, raw))
 }
 
@@ -288,6 +301,16 @@ fn merge_general(b: GeneralConfig, o: GeneralConfig) -> GeneralConfig {
     }
 }
 
+/// A minutes-valued setting: the environment wins over the config file, which
+/// wins over the built-in default. Set-but-empty and unparseable read as unset.
+pub fn resolve_minutes(env_var: &str, configured: Option<i64>, default: i64) -> i64 {
+    std::env::var(env_var)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .or(configured)
+        .unwrap_or(default)
+}
+
 /// Shows unless explicitly opted out.
 pub fn should_onboard(general: &GeneralConfig) -> bool {
     general.onboarding != Some(false)
@@ -309,7 +332,8 @@ pub fn save_onboarding(layout: &LayoutConfig) -> Result<()> {
     };
 
     let mut doc: toml::Value = if path.exists() {
-        let text = fs::read_to_string(&path).with_context(|| format!("reading config file {}", path.display()))?;
+        let text = fs::read_to_string(&path)
+            .with_context(|| format!("reading config file {}", path.display()))?;
         match toml::from_str(&text) {
             Ok(doc) => doc,
             Err(e) => {
@@ -365,13 +389,16 @@ pub fn save_onboarding(layout: &LayoutConfig) -> Result<()> {
     }
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("creating config directory {}", parent.display()))?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("creating config directory {}", parent.display()))?;
     }
     let text = toml::to_string_pretty(&doc).context("serializing config file")?;
     // Temp file then rename, so a reader never sees a torn config file.
     let temp_path = path.with_extension("toml.tmp");
-    fs::write(&temp_path, text).with_context(|| format!("writing config file {}", temp_path.display()))?;
-    fs::rename(&temp_path, &path).with_context(|| format!("renaming into place over {}", path.display()))?;
+    fs::write(&temp_path, text)
+        .with_context(|| format!("writing config file {}", temp_path.display()))?;
+    fs::rename(&temp_path, &path)
+        .with_context(|| format!("renaming into place over {}", path.display()))?;
     Ok(())
 }
 
@@ -459,7 +486,10 @@ mod tests {
             show_summary: Some(false),
             show_tags: Some(true),
         });
-        assert!(result.is_ok(), "a broken file must not fail the save: {result:?}");
+        assert!(
+            result.is_ok(),
+            "a broken file must not fail the save: {result:?}"
+        );
 
         let saved = load();
         assert_eq!(saved.layout.show_projects, Some(true));

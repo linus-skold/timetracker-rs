@@ -1,9 +1,9 @@
-use crossterm::event::KeyCode;
-use anyhow::Result;
-use chrono::{Datelike, Duration, Local, NaiveDate};
-use crate::storage::PathStamp;
 use super::App;
 use super::types::{ConfirmAction, InputMode, PendingConfirm, ViewMode};
+use crate::storage::PathStamp;
+use anyhow::Result;
+use chrono::{Datelike, Duration, Local, NaiveDate};
+use crossterm::event::KeyCode;
 
 impl App {
     /// Record the store's fingerprint, then load it. Stamp *before* the read —
@@ -34,6 +34,32 @@ impl App {
         }
         self.marks_stamp = current;
         self.marks = crate::marks::open_marks_in(&dir);
+    }
+
+    /// Pick up activity-ledger writes made outside the TUI (by hooks in other
+    /// sessions), and recompute [`App::unaccounted`] from whatever `marks` and
+    /// `data` already hold this tick. Call after
+    /// [`sync_from_marks`](Self::sync_from_marks) and
+    /// [`sync_from_store`](Self::sync_from_store) so both are current;
+    /// reconciliation itself is cheap enough to redo every tick; only the
+    /// session directory read is gated on its own `stat`.
+    pub(crate) fn sync_from_activity(&mut self) {
+        if let Some(dir) = crate::activity::activity_dir() {
+            let current = PathStamp::read(&dir);
+            if !PathStamp::unchanged(self.activity_stamp, current) {
+                self.activity_stamp = current;
+                self.activity_sessions = crate::activity::read_sessions_in(&dir);
+            }
+        } else {
+            self.activity_sessions.clear();
+        }
+        self.unaccounted = crate::audit::unaccounted(
+            &self.activity_sessions,
+            &self.marks,
+            &self.data.entries,
+            Local::now(),
+            crate::audit::max_unvouched_minutes(),
+        );
     }
 
     /// Pick up writes made outside the TUI, once per event-loop tick.
@@ -99,7 +125,11 @@ impl App {
         }
         let i = match self.table_state.selected() {
             Some(i) => {
-                if i == 0 { len - 1 } else { i - 1 }
+                if i == 0 {
+                    len - 1
+                } else {
+                    i - 1
+                }
             }
             None => 0,
         };
