@@ -2,6 +2,7 @@ use anyhow::Result;
 
 mod activity;
 mod agent;
+mod audit;
 mod cli;
 mod config;
 mod duration;
