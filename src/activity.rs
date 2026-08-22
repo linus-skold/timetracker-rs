@@ -87,7 +87,8 @@ fn append_field(dir: &Path, session_id: &str, field: &str) -> io::Result<()> {
 
 // --- reader -----------------------------------------------------------
 //
-// Read only, for `tt agent audit` (see `src/audit.rs`) — nothing here writes.
+// Read only, for `tt agent audit` and `tt agent activity check` (see
+// `src/audit.rs`) — nothing here writes.
 
 /// One session's window, as read back from its file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -111,6 +112,12 @@ pub fn read_sessions_in(dir: &Path) -> Vec<Session> {
         .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
         .filter_map(|e| read_session(&e.path()))
         .collect()
+}
+
+/// One session by its own id — for `Stop` checking its own window rather
+/// than every session in `dir`.
+pub fn read_session_in(dir: &Path, session_id: &str) -> Option<Session> {
+    read_session(&session_path(dir, session_id))
 }
 
 fn read_session(path: &Path) -> Option<Session> {
@@ -292,6 +299,17 @@ mod tests {
         fs::write(&path, "project=tt\n").unwrap();
 
         assert_eq!(read_sessions_in(&dir), Vec::new());
+    }
+
+    #[test]
+    fn a_single_session_reads_back_by_its_own_id() {
+        let dir = sandbox("read-single");
+        begin_in(&dir, "sess-1", Some("tt")).unwrap();
+        begin_in(&dir, "sess-2", Some("other")).unwrap();
+
+        let session = read_session_in(&dir, "sess-1").unwrap();
+        assert_eq!(session.project.as_deref(), Some("tt"));
+        assert_eq!(read_session_in(&dir, "no-such-session"), None);
     }
 
     #[test]
