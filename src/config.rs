@@ -69,6 +69,11 @@ pub struct ListConfig {
 pub struct AgentConfig {
     pub max_gap_minutes: Option<i64>,
     pub max_unvouched_minutes: Option<i64>,
+    /// How long an activity window may sit unaccounted for before
+    /// `tt agent audit --auto-log` writes a fallback `#auto` entry for it.
+    /// Unset (the default) disables auto-logging entirely — see
+    /// docs/decisions/0002-auto-logging-unaccounted-activity.md.
+    pub auto_log_after_minutes: Option<i64>,
 }
 
 /// Which collapsible TUI surfaces start open, independent of whether
@@ -282,6 +287,7 @@ fn merge_agent(b: AgentConfig, o: AgentConfig) -> AgentConfig {
     AgentConfig {
         max_gap_minutes: o.max_gap_minutes.or(b.max_gap_minutes),
         max_unvouched_minutes: o.max_unvouched_minutes.or(b.max_unvouched_minutes),
+        auto_log_after_minutes: o.auto_log_after_minutes.or(b.auto_log_after_minutes),
     }
 }
 

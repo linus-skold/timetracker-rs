@@ -3,9 +3,11 @@
 //! `docs/decisions/0001-agent-activity-tracking.md`.
 //!
 //! An activity window counts as accounted for when either a mark was open
-//! for its project overlapping any part of it, or a closed `#agent`-tagged
-//! entry covers it. Neither is **unaccounted agent activity**: real work
-//! that never got tracked at all.
+//! for its project overlapping any part of it, or a closed `#agent`- or
+//! `#auto`-tagged entry covers it (see
+//! `docs/decisions/0002-auto-logging-unaccounted-activity.md` for the
+//! latter). Neither is **unaccounted agent activity**: real work that never
+//! got tracked at all.
 
 use chrono::{DateTime, Local};
 
@@ -53,6 +55,27 @@ pub fn max_unvouched_minutes() -> i64 {
         crate::config::load().agent.max_unvouched_minutes,
         120,
     )
+}
+
+/// How long a window must stay unaccounted for before `tt agent audit
+/// --auto-log` (see docs/decisions/0002-auto-logging-unaccounted-activity.md)
+/// writes a fallback `#auto` entry for it, in minutes.
+/// `TT_AUTO_LOG_AFTER_MINUTES`, else `agent.auto_log_after_minutes`.
+///
+/// `None` disables auto-logging outright — both when neither is set (the
+/// default) and when the configured value does not exceed
+/// [`max_unvouched_minutes`]. The latter is a misconfiguration, and it must
+/// fail toward "off" rather than toward auto-logging a window the audit
+/// surfaces never had a chance to warn about first.
+///
+/// Unused outside tests until `--auto-log` (issue #19) reads it.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn auto_log_after_minutes() -> Option<i64> {
+    let configured = std::env::var("TT_AUTO_LOG_AFTER_MINUTES")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .or(crate::config::load().agent.auto_log_after_minutes)?;
+    (configured > max_unvouched_minutes()).then_some(configured)
 }
 
 /// Half-open interval overlap: touching endpoints do not count.
@@ -109,10 +132,14 @@ fn covered_by_mark(project: &str, start: i64, end: i64, marks: &[Mark], now: i64
         .any(|mark| overlaps(mark.start.timestamp(), now, start, end))
 }
 
+/// A closed entry covers a window when it's tagged `#agent` (an agent's own
+/// self-report) or `#auto` (a prior `--auto-log` run) — never on `#auto`
+/// alone being absent from `#agent`'s definition; the two provenances are
+/// deliberately distinct tags, checked together only here.
 fn covered_by_entry(project: &str, start: i64, end: i64, entries: &[TimeEntry], now: i64) -> bool {
     entries
         .iter()
-        .filter(|entry| entry.has_tag("agent"))
+        .filter(|entry| entry.has_tag("agent") || entry.has_tag("auto"))
         .filter(|entry| {
             entry
                 .project
@@ -237,6 +264,16 @@ mod tests {
     }
 
     #[test]
+    fn an_auto_tagged_entry_covers_the_same_as_an_agent_tagged_one() {
+        let sessions = vec![session(Some("tt"), 0, Some(3 * HOUR), 0)];
+        let entries = vec![entry("tt", 0, Some(3 * HOUR), &["tt", "auto", "auto"])];
+        assert!(
+            unaccounted(&sessions, &[], &entries, at(3 * HOUR), FLOOR).is_empty(),
+            "a prior --auto-log entry must stop the window from re-flagging"
+        );
+    }
+
+    #[test]
     fn a_partial_overlap_with_a_logged_entry_still_covers() {
         let sessions = vec![session(Some("tt"), 0, Some(3 * HOUR), 0)];
         // Entry only covers the tail of the window, but any overlap counts.
@@ -273,5 +310,63 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["newer", "older"]
         );
+    }
+
+    // --- auto_log_after_minutes --------------------------------------
+    //
+    // Serialised via `crate::storage::env_guard` against every other test
+    // that touches env; it is process-wide.
+    use crate::storage::env_guard;
+
+    fn set(var: &str, value: &str) {
+        unsafe { std::env::set_var(var, value) };
+    }
+
+    fn unset(var: &str) {
+        unsafe { std::env::remove_var(var) };
+    }
+
+    #[test]
+    fn unset_leaves_auto_logging_disabled() {
+        let _guard = env_guard();
+        unset("TT_AUTO_LOG_AFTER_MINUTES");
+        unset("TT_MAX_UNVOUCHED_MINUTES");
+        crate::storage::env_sandbox("audit-auto-log-unset");
+
+        assert_eq!(auto_log_after_minutes(), None);
+    }
+
+    #[test]
+    fn a_value_over_the_unvouched_floor_is_honoured() {
+        let _guard = env_guard();
+        crate::storage::env_sandbox("audit-auto-log-honoured");
+        unset("TT_MAX_UNVOUCHED_MINUTES"); // default floor: 120
+        set("TT_AUTO_LOG_AFTER_MINUTES", "480");
+
+        assert_eq!(auto_log_after_minutes(), Some(480));
+        unset("TT_AUTO_LOG_AFTER_MINUTES");
+    }
+
+    #[test]
+    fn a_value_at_or_under_the_unvouched_floor_disables_auto_logging() {
+        let _guard = env_guard();
+        crate::storage::env_sandbox("audit-auto-log-misconfigured");
+        set("TT_MAX_UNVOUCHED_MINUTES", "120");
+        set("TT_AUTO_LOG_AFTER_MINUTES", "120");
+        assert_eq!(
+            auto_log_after_minutes(),
+            None,
+            "equal to the floor must not enable auto-logging"
+        );
+
+        set("TT_AUTO_LOG_AFTER_MINUTES", "60");
+        assert_eq!(
+            auto_log_after_minutes(),
+            None,
+            "under the floor must not enable auto-logging"
+        );
+
+        unset("TT_MAX_UNVOUCHED_MINUTES");
+        unset("TT_AUTO_LOG_AFTER_MINUTES");
     }
 }
