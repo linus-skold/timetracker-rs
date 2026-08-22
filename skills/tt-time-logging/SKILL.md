@@ -123,6 +123,7 @@ tt agent item  <project> <issue|-> <phase> "<summary>" <minutes>
 
 tt agent list                                  # what is still open
 tt agent cancel <project> <issue|-> <phase>    # drop without logging
+tt agent audit [--auto-log]                    # unaccounted activity; see below
 
 tt report [--week|--all|--since DATE [--until DATE]] [--project NAME] [--json]
 ```
@@ -232,6 +233,25 @@ the plain begin → touch → end flow is enough.
   mark cleanup failed, an unwritable mark directory being the usual cause. **Do not
   retry the close**: a retry is exactly what would log the span twice. Say what
   happened, and `tt agent cancel` the phase once the directory is writable again.
+
+## Auto-logged entries
+
+`tt agent audit --auto-log` can write a fallback entry for a window that has
+sat unaccounted for well past the normal warning threshold — see
+`docs/decisions/0002-auto-logging-unaccounted-activity.md` in the
+timetracker-rs source repo for the full reasoning. It is opt-in
+(`agent.auto_log_after_minutes`, unset by default — most operators will
+never see one of these) and, when it does run, it never guesses:
+
+- **Phase is always the literal `auto`**, summary always the literal
+  `"unattended activity"` — never generated, never inferred from anything.
+- **Tagged `#auto`, never `#agent`.** This was not an agent's self-report,
+  so it does not carry that tag's meaning.
+
+**If you find a `#auto` entry, do not reclassify it.** Guessing a real phase
+for it after the fact is exactly what this mechanism exists to avoid —
+leave it as `auto`, and if it matters, say so and let the operator decide
+whether to split or re-tag it by hand.
 
 ## Reading back
 
