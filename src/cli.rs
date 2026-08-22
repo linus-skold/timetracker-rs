@@ -187,7 +187,14 @@ pub enum AgentCommands {
     Activity(ActivityCommands),
     /// Reconcile the activity ledger against marks and logged entries,
     /// reporting activity with no evidence it was ever tracked.
-    Audit,
+    Audit {
+        /// Write a fixed-phase `#auto` entry for every window that has also
+        /// passed `agent.auto_log_after_minutes`. A no-op unless that setting
+        /// is configured — see
+        /// docs/decisions/0002-auto-logging-unaccounted-activity.md.
+        #[arg(long)]
+        auto_log: bool,
+    },
 }
 
 /// See [`AgentCommands::Activity`]. Keyed by Claude Code's own session id.
@@ -219,8 +226,10 @@ impl AgentCommands {
             | AgentCommands::Touch { .. }
             | AgentCommands::Cancel { .. }
             | AgentCommands::List
-            | AgentCommands::Activity(_)
-            | AgentCommands::Audit => false,
+            | AgentCommands::Activity(_) => false,
+            // Only `--auto-log` actually writes; a plain audit stays on the
+            // fast, no-preamble path like `list` and `report`.
+            AgentCommands::Audit { auto_log } => *auto_log,
             AgentCommands::Item { .. } | AgentCommands::End { .. } => true,
         }
     }

@@ -67,9 +67,6 @@ pub fn max_unvouched_minutes() -> i64 {
 /// [`max_unvouched_minutes`]. The latter is a misconfiguration, and it must
 /// fail toward "off" rather than toward auto-logging a window the audit
 /// surfaces never had a chance to warn about first.
-///
-/// Unused outside tests until `--auto-log` (issue #19) reads it.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn auto_log_after_minutes() -> Option<i64> {
     let configured = std::env::var("TT_AUTO_LOG_AFTER_MINUTES")
         .ok()

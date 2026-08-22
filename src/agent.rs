@@ -2,9 +2,10 @@
 //!
 //! Presentation only; [`crate::marks`] owns every fact about the mark files.
 //!
-//! **`begin`, `touch`, `cancel` and `list` must touch no store** — `main.rs`
-//! dispatches them ahead of its migrate preamble. `item` and `end` log an entry
-//! through [`crate::cli::log`] and dispatch after it.
+//! **`begin`, `touch`, `cancel`, `list` and a plain `audit` must touch no
+//! store** — `main.rs` dispatches them ahead of its migrate preamble. `item`,
+//! `end` and `audit --auto-log` log an entry through [`crate::cli::log`] and
+//! dispatch after it.
 //!
 //! The messages are a contract: their caller is an agent following prose.
 
@@ -72,7 +73,7 @@ pub fn run(command: &AgentCommands) -> Result<()> {
             *trim,
         ),
         AgentCommands::Activity(command) => activity_command(command),
-        AgentCommands::Audit => run_audit(),
+        AgentCommands::Audit { auto_log } => run_audit(*auto_log),
     }
 }
 
@@ -215,32 +216,71 @@ fn list() -> Result<()> {
 /// entries, reporting activity with no evidence it was ever tracked. Missing
 /// or unreadable activity/mark directories read as empty rather than erroring
 /// — an audit must never fail over there being nothing to audit yet.
-fn run_audit() -> Result<()> {
+fn run_audit(auto_log: bool) -> Result<()> {
     let sessions = activity::activity_dir()
         .map(|dir| activity::read_sessions_in(&dir))
         .unwrap_or_default();
     let marks = marks::open_marks();
-    let mut data = storage::load_data()?;
-    tracker::migrate(&mut data);
+    let floor = audit::max_unvouched_minutes();
+    let now = chrono::Local::now();
 
-    let flagged = audit::unaccounted(
-        &sessions,
-        &marks,
-        &data.entries,
-        chrono::Local::now(),
-        audit::max_unvouched_minutes(),
-    );
+    let flagged = {
+        let mut data = storage::load_data()?;
+        tracker::migrate(&mut data);
+        audit::unaccounted(&sessions, &marks, &data.entries, now, floor)
+    };
 
-    if flagged.is_empty() {
+    // `auto_log_after_minutes` unset: `--auto-log` is accepted but logs
+    // nothing, exactly like a plain audit — see AgentConfig::auto_log_after_minutes.
+    let mut wrote_any = false;
+    if auto_log && let Some(threshold) = audit::auto_log_after_minutes() {
+        for item in &flagged {
+            let minutes = item.end.signed_duration_since(item.start).num_minutes();
+            if minutes > threshold {
+                write_auto_log(item)?;
+                wrote_any = true;
+            }
+        }
+    }
+
+    // Re-read: the entries just written now cover their own windows, so the
+    // report below must not still call them unaccounted.
+    let remaining = if wrote_any {
+        let mut data = storage::load_data()?;
+        tracker::migrate(&mut data);
+        audit::unaccounted(&sessions, &marks, &data.entries, now, floor)
+    } else {
+        flagged
+    };
+
+    if remaining.is_empty() {
         println!("No unaccounted agent activity.");
         return Ok(());
     }
 
     println!("{} Unaccounted agent activity:\n", icons::warning());
-    for item in &flagged {
+    for item in &remaining {
         println!("  {}", item.describe());
     }
     Ok(())
+}
+
+/// `--auto-log`: write one fixed-phase `#auto` entry for an unaccounted
+/// window, the way `tt agent item` would — except **never** tagged `#agent`,
+/// since this was not an agent's own self-report. Phase and summary are
+/// always the same literal text; nothing here guesses either. See
+/// docs/decisions/0002-auto-logging-unaccounted-activity.md.
+fn write_auto_log(item: &audit::Unaccounted) -> Result<()> {
+    let minutes = item.end.signed_duration_since(item.start).num_minutes();
+    cli::log(
+        "unattended activity #auto".to_string(),
+        format!("{}m", round_quarter(minutes)),
+        Vec::new(),
+        Some(item.project.clone()),
+        Vec::new(),
+        false,
+        Some(item.end),
+    )
 }
 
 /// `tt agent item <project> <issue|-> <phase> <summary> <minutes>`: log one
