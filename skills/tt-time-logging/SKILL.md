@@ -22,7 +22,9 @@ are kept in sync when either changes.
 knows nothing about Claude Code hooks, and prose alone gets skipped under context
 pressure. If you're using Claude Code, run this once after installing to wire in
 real enforcement (a `SessionStart` hook that injects this contract into every
-session, and a `Stop` hook that warns about marks left open):
+session, a `UserPromptSubmit` hook that re-injects it on every prompt so the
+discipline survives context getting pushed out in a long session, and a `Stop`
+hook that warns about marks left open):
 
 ```sh
 node <wherever the skill landed>/scripts/install-hooks.mjs

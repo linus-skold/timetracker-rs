@@ -7,9 +7,16 @@
 // ~/.claude/settings.json (not project-local, since they must fire in every
 // session):
 //
-//   SessionStart - injects this skill's contract; opens the activity window.
-//   Stop         - warns about open marks; closes the activity window.
-//   SubagentStop - records a subagent dispatch on the activity window.
+//   SessionStart     - injects this skill's contract; opens the activity window.
+//   UserPromptSubmit - re-injects the contract on every prompt, so the
+//                      begin/touch/end discipline survives context getting
+//                      pushed out in a long session.
+//   Stop             - warns about open marks; closes the activity window.
+//   SubagentStop     - records a subagent dispatch on the activity window.
+//
+// It also appends a one-line pointer to this skill into the user's global
+// ~/.claude/CLAUDE.md (if that file exists and doesn't already mention the
+// skill), mirroring how other global skills advertise themselves there.
 //
 // The activity ledger is a second, model-independent signal that a session
 // was active — see docs/decisions/0001-agent-activity-tracking.md. Keyed by
@@ -70,10 +77,12 @@ if (existsSync(settingsPath)) {
 
 settings.hooks ??= {};
 settings.hooks.SessionStart ??= [];
+settings.hooks.UserPromptSubmit ??= [];
 settings.hooks.Stop ??= [];
 settings.hooks.SubagentStop ??= [];
 
 const sessionStartCmd = `node -e "const fs=require('fs');process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:fs.readFileSync('${skillMdAbs}','utf8')}}))"`;
+const userPromptSubmitCmd = `node -e "const fs=require('fs');process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'UserPromptSubmit',additionalContext:fs.readFileSync('${skillMdAbs}','utf8')}}))"`;
 // Quoted: an absolute home path can contain spaces (e.g. "C:/Users/John Doe/...").
 const stopCmd = `node "${stopCheckAbs}"`;
 const activityBeginCmd = `node "${activityHookAbs}" begin`;
@@ -92,6 +101,12 @@ if (!hasCommand("SessionStart", sessionStartCmd)) {
 if (!hasCommand("SessionStart", activityBeginCmd)) {
   settings.hooks.SessionStart.push({
     hooks: [{ type: "command", command: activityBeginCmd, statusMessage: "Opening tt activity window" }],
+  });
+}
+
+if (!hasCommand("UserPromptSubmit", userPromptSubmitCmd)) {
+  settings.hooks.UserPromptSubmit.push({
+    hooks: [{ type: "command", command: userPromptSubmitCmd, statusMessage: "Reinforcing tt-time-logging contract" }],
   });
 }
 
@@ -117,4 +132,25 @@ writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 
 console.log(`tt-time-logging hooks installed into ${settingsPath}.`);
 console.log(`Contract, stop-check and activity-hook scripts copied into ${destDir}.`);
+
+// Append a one-line pointer into the global CLAUDE.md, mirroring the
+// pattern other global skills already use there (e.g. the "graphify"
+// entry). Only touches the file if it exists; only appends if the skill
+// isn't already mentioned, so this stays safe to re-run.
+const claudeMdPath = join(claudeHome, "CLAUDE.md");
+if (existsSync(claudeMdPath)) {
+  const claudeMd = readFileSync(claudeMdPath, "utf8");
+  if (!claudeMd.includes("tt-time-logging")) {
+    const pointer =
+      "\n# tt-time-logging\n" +
+      "- **tt-time-logging** (`~/.claude/skills/tt-time-logging/SKILL.md`) - time logging contract for the `tt` CLI: begin/touch/end phase marks, naming, summary/tag rules. Trigger: auto-loaded every session and prompt via hooks; `/tt-time-logging` to reload on demand.\n";
+    writeFileSync(claudeMdPath, claudeMd.replace(/\n*$/, "\n") + pointer);
+    console.log(`Appended a tt-time-logging pointer to ${claudeMdPath}.`);
+  } else {
+    console.log(`${claudeMdPath} already mentions tt-time-logging — left untouched.`);
+  }
+} else {
+  console.log(`No ${claudeMdPath} found — skipped the CLAUDE.md pointer.`);
+}
+
 console.log("Restart Claude Code or open /hooks once so the new settings file is picked up.");
