@@ -76,6 +76,15 @@ pub fn max_gap_minutes() -> i64 {
     )
 }
 
+/// Whether the `Stop` hook should auto-log a session's own unaccounted
+/// window, per `agent.auto_log_on_stop` — see
+/// docs/decisions/0003-auto-log-on-stop.md. `config::load` already resets
+/// this to `None` if `auto_log_after_minutes` is not also set, so a bare
+/// read here is enough; no need to re-check the precondition.
+pub fn auto_log_on_stop_enabled() -> bool {
+    crate::config::load().agent.auto_log_on_stop == Some(true)
+}
+
 /// How long a window must stay unaccounted for before `tt agent audit
 /// --auto-log` (see docs/decisions/0002-auto-logging-unaccounted-activity.md)
 /// writes a fallback `#auto` entry for it, in minutes.

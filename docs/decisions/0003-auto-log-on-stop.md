@@ -2,8 +2,8 @@
 
 ## Status
 
-Draft — for review. Not yet implemented. Addresses issue #21, which 0002's
-Alternatives section deferred pending its own design pass.
+Implemented (#26, #27). Addresses issue #21, which 0002's Alternatives
+section deferred pending its own design pass.
 
 ## Context
 

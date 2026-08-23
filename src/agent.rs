@@ -89,32 +89,52 @@ fn activity_command(command: &ActivityCommands) -> Result<()> {
         } => activity::begin_in(&dir, session_id, project.as_deref())?,
         ActivityCommands::End { session_id } => activity::end_in(&dir, session_id)?,
         ActivityCommands::Subagent { session_id } => activity::subagent_in(&dir, session_id)?,
-        ActivityCommands::Check { session_id } => return check_session(&dir, session_id),
+        ActivityCommands::Check {
+            session_id,
+            auto_log,
+        } => return check_session(&dir, session_id, *auto_log),
     }
     Ok(())
 }
 
-/// `tt agent activity check <session_id>`: the same reconciliation as
-/// `tt agent audit`, narrowed to one session, so the `Stop` hook can warn
-/// immediately rather than waiting for the next `audit` run. Silent when the
-/// session is accounted for, unknown, or has no resolved project.
-fn check_session(dir: &std::path::Path, session_id: &str) -> Result<()> {
+/// `tt agent activity check <session_id> [--auto-log]`: the same
+/// reconciliation as `tt agent audit`, narrowed to one session, so the `Stop`
+/// hook can warn immediately rather than waiting for the next `audit` run.
+/// Silent when the session is accounted for, unknown, or has no resolved
+/// project.
+///
+/// `--auto-log` is passed unconditionally by the hook; `tt` itself decides
+/// whether to act on it via `agent.auto_log_on_stop` (see
+/// docs/decisions/0003-auto-log-on-stop.md) — a flag with the setting off is
+/// the same as a plain check. A window that gets written is marked
+/// `(auto-logged)` in its line, so the hook can tell the two cases apart.
+fn check_session(dir: &std::path::Path, session_id: &str, auto_log: bool) -> Result<()> {
     let Some(session) = activity::read_session_in(dir, session_id) else {
         return Ok(());
     };
     let marks = marks::open_marks();
-    let mut data = storage::load_data()?;
-    tracker::migrate(&mut data);
+    let now = chrono::Local::now();
+    let floor = audit::max_unvouched_minutes();
 
-    let flagged = audit::unaccounted(
-        &[session],
-        &marks,
-        &data.entries,
-        chrono::Local::now(),
-        audit::max_unvouched_minutes(),
-    );
+    let flagged = {
+        let mut data = storage::load_data()?;
+        tracker::migrate(&mut data);
+        audit::unaccounted(&[session], &marks, &data.entries, now, floor)
+    };
+
+    let threshold = auto_log
+        .then(audit::auto_log_on_stop_enabled)
+        .and_then(|enabled| enabled.then(audit::auto_log_after_minutes))
+        .flatten();
+
     for item in &flagged {
-        println!("{}", item.describe());
+        let minutes = item.end.signed_duration_since(item.start).num_minutes();
+        if threshold.is_some_and(|threshold| minutes > threshold) {
+            write_auto_log(item)?;
+            println!("{} (auto-logged)", item.describe());
+        } else {
+            println!("{}", item.describe());
+        }
     }
     Ok(())
 }

@@ -74,6 +74,13 @@ pub struct AgentConfig {
     /// Unset (the default) disables auto-logging entirely — see
     /// docs/decisions/0002-auto-logging-unaccounted-activity.md.
     pub auto_log_after_minutes: Option<i64>,
+    /// Have the `Stop` hook's `tt agent activity check` call auto-log this
+    /// session's own unaccounted window, the same way `--auto-log` would.
+    /// Requires `auto_log_after_minutes` to already be set — see
+    /// docs/decisions/0003-auto-log-on-stop.md. A `true` value with no
+    /// `auto_log_after_minutes` is a misconfiguration: [`load`] warns and
+    /// disables it rather than silently no-op'ing.
+    pub auto_log_on_stop: Option<bool>,
 }
 
 /// Which collapsible TUI surfaces start open, independent of whether
@@ -126,7 +133,7 @@ pub fn load() -> Config {
             icons: raw.icons.unwrap_or_default(),
             duration: raw.duration.unwrap_or_default(),
             list: raw.list.unwrap_or_default(),
-            agent: raw.agent.unwrap_or_default(),
+            agent: validate_agent(raw.agent.unwrap_or_default()),
             layout: raw.layout.unwrap_or_default(),
             general: raw.general.unwrap_or_default(),
         },
@@ -138,6 +145,26 @@ pub fn load() -> Config {
             Config::default()
         }
     }
+}
+
+/// `auto_log_on_stop = true` without `auto_log_after_minutes` already set is a
+/// config error, not a silent no-op — see docs/decisions/0003-auto-log-on-stop.md
+/// decision 1. A loud warning and `auto_log_on_stop` reset to `None`, mirroring
+/// how a file that fails to parse warns and falls back rather than erroring the
+/// whole command.
+fn validate_agent(agent: AgentConfig) -> AgentConfig {
+    if agent.auto_log_on_stop == Some(true) && agent.auto_log_after_minutes.is_none() {
+        eprintln!(
+            "Warning: agent.auto_log_on_stop is set but agent.auto_log_after_minutes is not — \
+             auto_log_on_stop requires it to be configured first (see \
+             docs/decisions/0003-auto-log-on-stop.md). Ignoring auto_log_on_stop."
+        );
+        return AgentConfig {
+            auto_log_on_stop: None,
+            ..agent
+        };
+    }
+    agent
 }
 
 fn config_path() -> Option<PathBuf> {
@@ -288,6 +315,7 @@ fn merge_agent(b: AgentConfig, o: AgentConfig) -> AgentConfig {
         max_gap_minutes: o.max_gap_minutes.or(b.max_gap_minutes),
         max_unvouched_minutes: o.max_unvouched_minutes.or(b.max_unvouched_minutes),
         auto_log_after_minutes: o.auto_log_after_minutes.or(b.auto_log_after_minutes),
+        auto_log_on_stop: o.auto_log_on_stop.or(b.auto_log_on_stop),
     }
 }
 
@@ -519,6 +547,36 @@ mod tests {
         let saved = load();
         assert_eq!(saved.general.onboarding, Some(false));
         drop(dir);
+    }
+
+    #[test]
+    fn auto_log_on_stop_without_the_threshold_is_dropped_with_a_warning() {
+        let dropped = validate_agent(AgentConfig {
+            auto_log_on_stop: Some(true),
+            auto_log_after_minutes: None,
+            ..Default::default()
+        });
+        assert_eq!(dropped.auto_log_on_stop, None);
+    }
+
+    #[test]
+    fn auto_log_on_stop_with_the_threshold_set_is_kept() {
+        let kept = validate_agent(AgentConfig {
+            auto_log_on_stop: Some(true),
+            auto_log_after_minutes: Some(480),
+            ..Default::default()
+        });
+        assert_eq!(kept.auto_log_on_stop, Some(true));
+    }
+
+    #[test]
+    fn auto_log_on_stop_unset_is_untouched_either_way() {
+        let agent = validate_agent(AgentConfig {
+            auto_log_on_stop: None,
+            auto_log_after_minutes: None,
+            ..Default::default()
+        });
+        assert_eq!(agent.auto_log_on_stop, None);
     }
 
     /// Unrelated sections (e.g. `[theme]`) must survive a round trip through

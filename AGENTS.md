@@ -228,6 +228,13 @@ for it after the fact is exactly what this mechanism exists to avoid —
 leave it as `auto`, and if it matters, say so and let the operator decide
 whether to split or re-tag it by hand.
 
+`agent.auto_log_on_stop` extends the same mechanism to the `Stop` hook
+itself: when set, `tt-stop-check.mjs`'s `tt agent activity check --auto-log`
+call auto-logs the ending session's own unaccounted window instead of only
+warning about it — same fixed phase/summary/tags, same idempotency. It
+requires `agent.auto_log_after_minutes` to already be set (a config error
+otherwise) — see `docs/decisions/0003-auto-log-on-stop.md`.
+
 ## Reading back
 
 Use `tt report`, never parse `tt list` — that output is emoji-decorated text for

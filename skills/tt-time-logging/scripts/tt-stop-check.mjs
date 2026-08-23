@@ -55,16 +55,28 @@ const session = sessionId();
 if (session) {
   let checked = "";
   try {
-    checked = execFileSync("tt", ["agent", "activity", "check", session], {
-      encoding: "utf8",
-    });
+    checked = execFileSync(
+      "tt",
+      ["agent", "activity", "check", "--auto-log", session],
+      { encoding: "utf8" },
+    );
   } catch {
     checked = "";
   }
-  if (checked.trim()) {
+  const trimmed = checked.trim();
+  if (trimmed) {
+    // `tt` only marks a line `(auto-logged)` when `agent.auto_log_on_stop`
+    // is configured and it actually wrote an entry for that line — see
+    // docs/decisions/0003-auto-log-on-stop.md.
+    const autoLogged = trimmed
+      .split("\n")
+      .some((line) => line.includes("(auto-logged)"));
     messages.push(
-      `tt-time-logging: this session's activity is unaccounted for — no open mark ` +
-        `or logged #agent entry covers it:\n${checked.trim()}`,
+      autoLogged
+        ? `tt-time-logging: this session's activity was unaccounted for — ` +
+            `auto-logged under #auto (agent.auto_log_on_stop):\n${trimmed}`
+        : `tt-time-logging: this session's activity is unaccounted for — no open mark ` +
+            `or logged #agent entry covers it:\n${trimmed}`,
     );
   }
 }
