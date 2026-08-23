@@ -29,7 +29,10 @@ Everything below is detail on those three commands.
 > when either changes. Installation, and the one-time `install-hooks.mjs` step
 > that wires this contract into Claude Code's
 > `SessionStart`/`UserPromptSubmit`/`Stop` hooks, are documented in
-> `skills/tt-time-logging/README.md`.
+> `skills/tt-time-logging/README.md`. Note that everything above this note is
+> also the per-prompt **card** — `SKILL.md` marks the same cut with
+> `<!-- card:end -->` and injects only that head on every prompt, so keep the
+> opening short and actionable when editing either file.
 
 ## Rules
 

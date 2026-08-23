@@ -27,6 +27,8 @@ issue number, or `-`. `<phase>` is one of:
 | investigation that produces no artifact | `spike` |
 | tooling, config, environment, release | `ops` |
 
+<!-- card:end — everything above is the per-prompt card; see scripts/tt-contract-hook.mjs -->
+
 Everything below is detail on those three commands. Setup and installation live
 in [README.md](README.md), not here.
 

@@ -7,10 +7,12 @@
 // ~/.claude/settings.json (not project-local, since they must fire in every
 // session):
 //
-//   SessionStart     - injects this skill's contract; opens the activity window.
-//   UserPromptSubmit - re-injects the contract on every prompt, so the
-//                      begin/touch/end discipline survives context getting
-//                      pushed out in a long session.
+//   SessionStart     - injects this skill's full contract; opens the activity
+//                      window.
+//   UserPromptSubmit - re-injects only the operating card on every prompt, so
+//                      the begin/touch/end discipline survives context getting
+//                      pushed out in a long session without re-spending the
+//                      whole document every turn. See tt-contract-hook.mjs.
 //   Stop             - warns about open marks; closes the activity window.
 //   SubagentStop     - records a subagent dispatch on the activity window.
 //
@@ -56,19 +58,22 @@ const destDir = join(claudeHome, "hooks", "tt-time-logging");
 const skillMdDest = join(destDir, "SKILL.md");
 const stopCheckDest = join(destDir, "tt-stop-check.mjs");
 const activityHookDest = join(destDir, "tt-activity-hook.mjs");
+// Sits beside the SKILL.md copy on purpose: it reads the contract from its own
+// directory, so the pair stays self-contained wherever it's installed.
+const contractHookDest = join(destDir, "tt-contract-hook.mjs");
 
 mkdirSync(destDir, { recursive: true });
 copyFileSync(join(skillDir, "SKILL.md"), skillMdDest);
 copyFileSync(join(scriptDir, "tt-stop-check.mjs"), stopCheckDest);
 copyFileSync(join(scriptDir, "tt-activity-hook.mjs"), activityHookDest);
+copyFileSync(join(scriptDir, "tt-contract-hook.mjs"), contractHookDest);
 
-// Forward slashes only: Node's fs calls accept them on every OS, and it
-// sidesteps having to escape backslashes inside the nested JS string literal
-// below.
+// Forward slashes only: Node's fs calls accept them on every OS, and it keeps
+// the commands written into settings.json free of escaped backslashes.
 const toFwd = (p) => p.replace(/\\/g, "/");
-const skillMdAbs = toFwd(skillMdDest);
 const stopCheckAbs = toFwd(stopCheckDest);
 const activityHookAbs = toFwd(activityHookDest);
+const contractHookAbs = toFwd(contractHookDest);
 
 let settings = {};
 if (existsSync(settingsPath)) {
@@ -81,9 +86,32 @@ settings.hooks.UserPromptSubmit ??= [];
 settings.hooks.Stop ??= [];
 settings.hooks.SubagentStop ??= [];
 
-const sessionStartCmd = `node -e "const fs=require('fs');process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:fs.readFileSync('${skillMdAbs}','utf8')}}))"`;
-const userPromptSubmitCmd = `node -e "const fs=require('fs');process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'UserPromptSubmit',additionalContext:fs.readFileSync('${skillMdAbs}','utf8')}}))"`;
+// Earlier versions inlined the injection as a `node -e "…readFileSync(SKILL.md)…"`
+// one-liner on both events. Drop those: left in place they'd fire alongside the
+// new hook, injecting the contract twice per prompt — and the inline form always
+// injected the whole file, which is the thing the card split exists to stop.
+const isLegacyInjector = (command) =>
+  typeof command === "string" &&
+  command.startsWith("node -e ") &&
+  command.includes("tt-time-logging");
+
+let removedLegacy = 0;
+for (const event of ["SessionStart", "UserPromptSubmit"]) {
+  settings.hooks[event] = settings.hooks[event]
+    .map((entry) => {
+      if (!Array.isArray(entry.hooks)) return entry;
+      const kept = entry.hooks.filter((h) => !isLegacyInjector(h.command));
+      removedLegacy += entry.hooks.length - kept.length;
+      return { ...entry, hooks: kept };
+    })
+    // An entry that held nothing but the legacy injector is now empty — prune it
+    // rather than leaving a hook entry with no hooks in it.
+    .filter((entry) => !Array.isArray(entry.hooks) || entry.hooks.length > 0);
+}
+
 // Quoted: an absolute home path can contain spaces (e.g. "C:/Users/John Doe/...").
+const sessionStartCmd = `node "${contractHookAbs}" session`;
+const userPromptSubmitCmd = `node "${contractHookAbs}" prompt`;
 const stopCmd = `node "${stopCheckAbs}"`;
 const activityBeginCmd = `node "${activityHookAbs}" begin`;
 const activityEndCmd = `node "${activityHookAbs}" end`;
@@ -131,7 +159,10 @@ if (!hasCommand("SubagentStop", activitySubagentCmd)) {
 writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
 
 console.log(`tt-time-logging hooks installed into ${settingsPath}.`);
-console.log(`Contract, stop-check and activity-hook scripts copied into ${destDir}.`);
+console.log(`Contract, stop-check, activity- and contract-hook scripts copied into ${destDir}.`);
+if (removedLegacy > 0) {
+  console.log(`Removed ${removedLegacy} legacy inline contract-injection hook(s).`);
+}
 
 // Append a one-line pointer into the global CLAUDE.md, mirroring the
 // pattern other global skills already use there (e.g. the "graphify"
@@ -141,9 +172,11 @@ const claudeMdPath = join(claudeHome, "CLAUDE.md");
 if (existsSync(claudeMdPath)) {
   const claudeMd = readFileSync(claudeMdPath, "utf8");
   if (!claudeMd.includes("tt-time-logging")) {
+    // Point at the copy the hooks actually read. The skill itself may have been
+    // installed project-locally, in which case ~/.claude/skills/… doesn't exist.
     const pointer =
       "\n# tt-time-logging\n" +
-      "- **tt-time-logging** (`~/.claude/skills/tt-time-logging/SKILL.md`) - time logging contract for the `tt` CLI: begin/touch/end phase marks, naming, summary/tag rules. Trigger: auto-loaded every session and prompt via hooks; `/tt-time-logging` to reload on demand.\n";
+      `- **tt-time-logging** (\`${toFwd(skillMdDest).replace(homedir().replace(/\\/g, "/"), "~")}\`) - time logging contract for the \`tt\` CLI: begin/touch/end phase marks, naming, summary/tag rules. Trigger: the operating card is injected every session and prompt via hooks; \`/tt-time-logging\` loads the full contract on demand.\n`;
     writeFileSync(claudeMdPath, claudeMd.replace(/\n*$/, "\n") + pointer);
     console.log(`Appended a tt-time-logging pointer to ${claudeMdPath}.`);
   } else {
