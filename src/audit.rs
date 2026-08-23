@@ -12,8 +12,8 @@
 use chrono::{DateTime, Local};
 
 use crate::activity::Session;
-use crate::marks::Mark;
-use crate::tracker::TimeEntry;
+use crate::marks::{self, Mark};
+use crate::tracker::{IdleInterval, TimeEntry};
 
 /// One activity window with no evidence it was tracked.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,6 +22,13 @@ pub struct Unaccounted {
     pub start: DateTime<Local>,
     pub end: DateTime<Local>,
     pub subagents: usize,
+    /// Idle stretches between subagent-dispatch heartbeats, over
+    /// [`max_gap_minutes`] — see [`write_auto_log`](crate::agent) and
+    /// docs/decisions/0003-auto-log-on-stop.md ("3b. Idle time must be
+    /// subtracted before a window is auto-logged"). `describe()` still
+    /// reports the raw wall-clock span; only an auto-logged entry's
+    /// duration is adjusted by this.
+    pub idle: Vec<IdleInterval>,
 }
 
 impl Unaccounted {
@@ -54,6 +61,18 @@ pub fn max_unvouched_minutes() -> i64 {
         "TT_MAX_UNVOUCHED_MINUTES",
         crate::config::load().agent.max_unvouched_minutes,
         120,
+    )
+}
+
+/// How long a silence *between subagent-dispatch heartbeats* has to be to
+/// count as idle, in minutes — the same knob `tt agent end` judges interior
+/// mark silence against. `TT_MAX_GAP_MINUTES`, else `agent.max_gap_minutes`,
+/// else 45.
+pub fn max_gap_minutes() -> i64 {
+    crate::config::resolve_minutes(
+        "TT_MAX_GAP_MINUTES",
+        crate::config::load().agent.max_gap_minutes,
+        45,
     )
 }
 
@@ -92,6 +111,7 @@ pub fn unaccounted(
     floor_minutes: i64,
 ) -> Vec<Unaccounted> {
     let now_epoch = now.timestamp();
+    let gap = max_gap_minutes();
 
     let mut found: Vec<Unaccounted> = sessions
         .iter()
@@ -108,11 +128,25 @@ pub fn unaccounted(
                 return None;
             }
 
+            // Unlike a mark's beats, no subagent dispatches is not evidence
+            // of silence — most sessions never dispatch one at all. Only
+            // treat gaps *between* dispatches (and before the first / after
+            // the last) as idle when there is at least one to anchor on.
+            let idle = if session.subagent_at.is_empty() {
+                Vec::new()
+            } else {
+                marks::gaps_over(session.start, end_epoch, &session.subagent_at, gap)
+                    .into_iter()
+                    .filter_map(|(from, to)| Some(IdleInterval::new(instant(from)?, instant(to)?)))
+                    .collect()
+            };
+
             Some(Unaccounted {
                 project: project.to_string(),
                 start: instant(session.start)?,
                 end: instant(end_epoch)?,
                 subagents: session.subagents,
+                idle,
             })
         })
         .collect();
@@ -164,6 +198,7 @@ mod tests {
             start,
             end,
             subagents,
+            subagent_at: Vec::new(),
         }
     }
 
@@ -342,6 +377,53 @@ mod tests {
 
         assert_eq!(auto_log_after_minutes(), Some(480));
         unset("TT_AUTO_LOG_AFTER_MINUTES");
+    }
+
+    // --- idle-gap subtraction (issue #26) -----------------------------
+
+    fn session_with_subagents(
+        project: &str,
+        start: i64,
+        end: Option<i64>,
+        subagent_at: Vec<i64>,
+    ) -> Session {
+        Session {
+            project: Some(project.to_string()),
+            start,
+            end,
+            subagents: subagent_at.len(),
+            subagent_at,
+        }
+    }
+
+    #[test]
+    fn a_window_with_no_subagent_dispatches_carries_no_idle() {
+        let sessions = vec![session(Some("tt"), 0, Some(3 * HOUR), 0)];
+        let flagged = unaccounted(&sessions, &[], &[], at(3 * HOUR), FLOOR);
+        assert_eq!(flagged.len(), 1);
+        assert!(flagged[0].idle.is_empty());
+    }
+
+    #[test]
+    fn a_long_silence_between_dispatches_is_recorded_as_idle() {
+        let _guard = env_guard();
+        crate::storage::env_sandbox("audit-idle-gap");
+        unset("TT_MAX_GAP_MINUTES"); // default: 45
+
+        // A dispatch 10 minutes in, then nothing until the window's tail.
+        let sessions = vec![session_with_subagents(
+            "tt",
+            0,
+            Some(3 * HOUR),
+            vec![10 * 60],
+        )];
+        let flagged = unaccounted(&sessions, &[], &[], at(3 * HOUR), FLOOR);
+        assert_eq!(flagged.len(), 1);
+        // The lead-in before the dispatch is under the 45m threshold and
+        // does not count; the long silence after it does.
+        assert_eq!(flagged[0].idle.len(), 1);
+        assert_eq!(flagged[0].idle[0].start, at(10 * 60));
+        assert_eq!(flagged[0].idle[0].end, at(3 * HOUR));
     }
 
     #[test]

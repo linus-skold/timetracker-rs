@@ -17,7 +17,6 @@ use crate::tracker::IdleInterval;
 use crate::activity;
 use crate::audit;
 use crate::cli::{self, ActivityCommands, AgentCommands};
-use crate::config;
 use crate::icons;
 use crate::marks::{self, Begin, Touch};
 use crate::storage;
@@ -277,8 +276,8 @@ fn write_auto_log(item: &audit::Unaccounted) -> Result<()> {
         format!("{}m", round_quarter(minutes)),
         Vec::new(),
         Some(item.project.clone()),
-        Vec::new(),
-        false,
+        item.idle.clone(),
+        true,
         Some(item.end),
     )
 }
@@ -407,7 +406,7 @@ fn end(
             let threshold = if marked.beats.is_empty() {
                 audit::max_unvouched_minutes()
             } else {
-                max_gap_minutes()
+                audit::max_gap_minutes()
             };
             let gaps = marks::gaps_over(marked.started, ended, &marked.beats, threshold);
             if gaps.is_empty() {
@@ -506,16 +505,6 @@ fn article(minutes: i64) -> &'static str {
     } else {
         "a"
     }
-}
-
-/// How long a silence *between heartbeats* has to be to count, in minutes.
-/// `TT_MAX_GAP_MINUTES`, else `agent.max_gap_minutes`, else 45.
-fn max_gap_minutes() -> i64 {
-    config::resolve_minutes(
-        "TT_MAX_GAP_MINUTES",
-        config::load().agent.max_gap_minutes,
-        45,
-    )
 }
 
 fn instant(epoch: i64) -> Result<DateTime<Local>> {

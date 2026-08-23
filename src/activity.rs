@@ -99,6 +99,11 @@ pub struct Session {
     pub end: Option<i64>,
     /// How many `subagent=` markers were recorded.
     pub subagents: usize,
+    /// Every `subagent=` timestamp, in file order (chronological — appends
+    /// are the only writer). Used as heartbeat-like evidence of activity
+    /// inside the session, so `audit::unaccounted` can subtract idle gaps
+    /// between them the way `marks::gaps_over` does for a mark's beats.
+    pub subagent_at: Vec<i64>,
 }
 
 /// Every session in `dir`. A file with no `start=` line is skipped — it is
@@ -126,6 +131,7 @@ fn read_session(path: &Path) -> Option<Session> {
     let mut start = None;
     let mut end = None;
     let mut subagents = 0;
+    let mut subagent_at = Vec::new();
 
     for line in body.lines() {
         let Some((field, value)) = line.split_once('=') else {
@@ -137,7 +143,12 @@ fn read_session(path: &Path) -> Option<Session> {
             // The last `end=` line wins, so a Stop that fired more than once
             // is measured to its final close.
             "end" => end = value.parse().ok(),
-            "subagent" => subagents += 1,
+            "subagent" => {
+                subagents += 1;
+                if let Ok(at) = value.parse() {
+                    subagent_at.push(at);
+                }
+            }
             _ => {}
         }
     }
@@ -147,6 +158,7 @@ fn read_session(path: &Path) -> Option<Session> {
         start: start?,
         end,
         subagents,
+        subagent_at,
     })
 }
 
