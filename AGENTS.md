@@ -88,13 +88,20 @@ unmarked, which is what makes the two distinguishable at all.
 
 ## Commands
 
+`begin`/`touch`/`end` is the primary flow: open a mark when a piece of work
+starts, touch it if it runs long, and close it when the work is done. `end`
+measures the real elapsed span from the mark's own timestamps, so the logged
+duration is what actually happened, never a guess.
+
 ```sh
-# time a phase
+# time a phase — the default flow
 tt agent begin <project> <issue|-> <phase>
 tt agent touch <project> <issue|-> <phase>     # work confirmed still happening
 tt agent end   <project> <issue|-> <phase> "<summary>"
 
-# or log a known duration outright
+# fallback only: the duration is already known some other way (no mark to
+# measure from — e.g. reporting someone else's already-finished work).
+# Never a substitute for measuring a span you could have marked instead.
 tt agent item  <project> <issue|-> <phase> "<summary>" <minutes>
 
 tt agent list                                  # what is still open
@@ -104,7 +111,9 @@ tt agent audit [--auto-log]                    # unaccounted activity; see below
 tt report [--week|--all|--since DATE [--until DATE]] [--project NAME] [--json]
 ```
 
-Durations are rounded to 15 minutes, floor 15.
+Durations are rounded **up** to the nearest 5 minutes, never below 5 — a
+ceiling, not nearest, so a logged span never reads shorter than what was
+actually spent.
 
 A mark's start time survives the agent's context being truncated or compacted, so do
 not hold start times in context. Marks live in the application's own cache directory;

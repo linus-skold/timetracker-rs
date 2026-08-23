@@ -150,7 +150,11 @@ pub enum AgentCommands {
     },
     /// List every open mark
     List,
-    /// Log one finished piece of work, with no mark involved
+    /// Log one finished piece of work for a **known** duration, with no mark
+    /// involved. A fallback for when there was nothing to `begin`/`end`
+    /// around (the duration is already known some other way) — prefer
+    /// `begin`/`touch`/`end` whenever the work can be marked as it happens,
+    /// so the logged span is measured, not guessed.
     Item {
         project: String,
         /// Issue number, or `-` for a phase with no issue
@@ -158,7 +162,7 @@ pub enum AgentCommands {
         phase: String,
         /// 3-6 words of plain prose, with no issue number in them
         summary: Option<String>,
-        /// Whole minutes, rounded up to the nearest quarter hour
+        /// Whole minutes, rounded up to the nearest 5 minutes
         minutes: Option<String>,
     },
     /// Close a marked phase, measuring it to its last heartbeat

@@ -217,7 +217,7 @@ struct GapFixture {
 impl GapFixture {
     /// The measured span as logged, through the same rounding `end` applies.
     fn minutes_rounded(&self) -> i64 {
-        common::round_quarter(self.minutes)
+        common::round_five(self.minutes)
     }
 }
 
@@ -611,7 +611,7 @@ fn explicit_minutes_beat_trim_as_well_and_record_nothing() {
         "--trim",
     ]);
     run.assert_status(0);
-    assert_eq!(run.logged_minutes(), common::round_quarter(30));
+    assert_eq!(run.logged_minutes(), common::round_five(30));
 
     let entries = case.store().entries;
     assert_eq!(entries.len(), 1, "nothing was split");

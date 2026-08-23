@@ -362,15 +362,16 @@ impl Idle {
     }
 }
 
-/// The rounding `tt` applies to a logged duration.
-pub fn round_quarter(minutes: i64) -> i64 {
-    (((minutes + 7) / 15) * 15).max(15)
+/// The rounding `tt` applies to a logged duration: up to the next 5 minutes,
+/// never below 5.
+pub fn round_five(minutes: i64) -> i64 {
+    (((minutes + 4) / 5) * 5).max(5)
 }
 
 /// The `- Duration:` tail `cli::log` prints for `minutes` — the figure it was asked
 /// for, never the stored span.
 pub fn logged_duration(minutes: i64) -> String {
-    let rounded = round_quarter(minutes);
+    let rounded = round_five(minutes);
     format!("- Duration: {}h {}m", rounded / 60, rounded % 60)
 }
 

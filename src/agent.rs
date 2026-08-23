@@ -293,7 +293,7 @@ fn write_auto_log(item: &audit::Unaccounted) -> Result<()> {
     let minutes = item.end.signed_duration_since(item.start).num_minutes();
     cli::log(
         "unattended activity #auto".to_string(),
-        format!("{}m", round_quarter(minutes)),
+        format!("{}m", round_five(minutes)),
         Vec::new(),
         Some(item.project.clone()),
         item.idle.clone(),
@@ -303,7 +303,10 @@ fn write_auto_log(item: &audit::Unaccounted) -> Result<()> {
 }
 
 /// `tt agent item <project> <issue|-> <phase> <summary> <minutes>`: log one
-/// finished piece of work in one call. No mark file is read, written or cleared.
+/// finished piece of work in one call, for a duration already known some
+/// other way. No mark file is read, written or cleared — this is the
+/// fallback for when there was nothing to `begin`/`end` around; prefer that
+/// pair whenever the work can be marked as it happens instead.
 fn item(
     project: &str,
     issue: &str,
@@ -358,7 +361,7 @@ fn log_entry(
 ) -> Result<()> {
     cli::log(
         description(project, issue, phase, summary),
-        format!("{}m", round_quarter(minutes)),
+        format!("{}m", round_five(minutes)),
         Vec::new(),
         Some(project.to_string()),
         idle,
@@ -546,9 +549,11 @@ fn clock(epoch: i64) -> String {
 // `item` and `end` must log an entry the same way, so the rounding, the stray-`#`
 // stripping and the three tags live here once.
 
-/// Round minutes to the nearest quarter hour, halfway up, never below 15.
-fn round_quarter(minutes: i64) -> i64 {
-    (((minutes + 7) / 15) * 15).max(15)
+/// Round minutes **up** to the next 5 minutes, never below 5. Always a
+/// ceiling, never nearest — a logged span never reads shorter than what was
+/// actually spent.
+fn round_five(minutes: i64) -> i64 {
+    (((minutes + 4) / 5) * 5).max(5)
 }
 
 /// Strip a `#` run that begins a word, so a summary mentioning "#12" does not
@@ -607,20 +612,21 @@ mod tests {
     }
 
     #[test]
-    fn rounding_goes_up_to_the_nearest_quarter() {
-        assert_eq!(round_quarter(37), 30);
-        assert_eq!(round_quarter(38), 45);
-        assert_eq!(round_quarter(43), 45);
-        assert_eq!(round_quarter(45), 45);
+    fn rounding_always_rounds_up_to_the_next_five_minutes() {
+        assert_eq!(round_five(36), 40);
+        assert_eq!(round_five(37), 40);
+        assert_eq!(round_five(40), 40, "already on a five-minute mark");
+        assert_eq!(round_five(41), 45);
+        assert_eq!(round_five(45), 45);
     }
 
     #[test]
-    fn rounding_never_goes_below_a_quarter_hour() {
-        // A two-minute errand costs a quarter, and so does zero.
-        assert_eq!(round_quarter(0), 15);
-        assert_eq!(round_quarter(2), 15);
-        assert_eq!(round_quarter(7), 15);
-        assert_eq!(round_quarter(8), 15);
+    fn rounding_never_goes_below_five_minutes() {
+        // A two-minute errand costs five, and so does zero.
+        assert_eq!(round_five(0), 5);
+        assert_eq!(round_five(1), 5);
+        assert_eq!(round_five(2), 5);
+        assert_eq!(round_five(4), 5);
     }
 
     #[test]

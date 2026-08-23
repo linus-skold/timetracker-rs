@@ -52,7 +52,7 @@ yet would skip past the warning stage entirely.
 
 For every window `unaccounted()` (see `src/audit.rs`) returns that also
 exceeds `auto_log_after_minutes`, log it the same way `tt agent item` does
-— project field, rounded to the nearest quarter hour, floor 15 — with:
+— project field, rounded up to the nearest 5 minutes, floor 5 — with:
 
 - **phase `auto`**, a literal, not a guess. Never `spike` — `spike` means a
   human or agent judged this to be investigation with no artifact; an
