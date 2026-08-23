@@ -5,41 +5,30 @@ description: Time-logging contract for coding agents working in a repo tracked w
 
 # Time logging contract
 
-For any coding agent working in a repo where the operator tracks time with `tt`.
-Tool-agnostic — this needs a shell and nothing else.
-
-Everything here is `tt` itself. Run
-`cargo install --git https://github.com/linus-skold/timetracker-rs` and the whole
-workflow is on your `PATH`.
-
-This file mirrors `AGENTS.md` in the
-[timetracker-rs](https://github.com/linus-skold/timetracker-rs) source repo; the two
-are kept in sync when either changes.
-
-## Enforcing this in Claude Code
-
-`npx skills add` is tool-agnostic — it only copies this directory into place; it
-knows nothing about Claude Code hooks, and prose alone gets skipped under context
-pressure. If you're using Claude Code, run this once after installing to wire in
-real enforcement (a `SessionStart` hook that injects this contract into every
-session, a `UserPromptSubmit` hook that re-injects it on every prompt so the
-discipline survives context getting pushed out in a long session, and a `Stop`
-hook that warns about marks left open):
+**Before your first file-changing tool call, open a mark.** Close it when that
+phase of work finishes — not at the end of the session.
 
 ```sh
-node <wherever the skill landed>/scripts/install-hooks.mjs
+tt agent begin <project> <issue|-> <phase>
+tt agent touch <project> <issue|-> <phase>                  # still working
+tt agent end   <project> <issue|-> <phase> "<summary>"      # done — logs real elapsed time
 ```
 
-This writes to your **global** `~/.claude/settings.json`, not a project-local
-one — the hooks are meant to fire in every session, in every project, not just
-the one you happened to run the installer from. It also copies this file and
-the stop-check script into `~/.claude/hooks/tt-time-logging/`, so the hooks
-keep working regardless of where the skill itself is installed. It requires
-Claude Code to have already been run at least once (so `~/.claude` exists) —
-if it hasn't, the script says so and exits without writing anything.
+`<project>` is `$TT_PROJECT`, else the repo directory name. `<issue>` is the
+issue number, or `-`. `<phase>` is one of:
 
-Safe to re-run. Then open `/hooks` once (or restart) so Claude Code picks up the
-new `~/.claude/settings.json`.
+| Work | Phase |
+|---|---|
+| planning, breaking work down, writing a spec | `plan` |
+| writing or changing code | `impl` |
+| verifying behaviour, running or fixing tests | `qa` |
+| reading code to judge it, whether or not it changes | `review` |
+| documentation | `docs` |
+| investigation that produces no artifact | `spike` |
+| tooling, config, environment, release | `ops` |
+
+Everything below is detail on those three commands. Setup and installation live
+in [README.md](README.md), not here.
 
 ## Rules
 
@@ -70,24 +59,12 @@ new `~/.claude/settings.json`.
   environment manager such as `mise` or `direnv`, `$TT_PROJECT` is a natural thing
   for them to declare there, so the value travels with the repo.)
 - **issue** — the tracked issue number, or `-` if untracked
-- **phase** — one of `plan` `impl` `qa` `review` `docs` `spike` `ops`; see
-  [Which phase](#which-phase)
+- **phase** — one of `plan` `impl` `qa` `review` `docs` `spike` `ops`; see the
+  phase table at the top of this file
 
 **project is a real field** on the entry, not a tag: the agent commands pass it as
 `tt log --project <project>`, so it is stored explicitly rather than guessed. This
 matters when reading rollups back — `tt report` groups on the field.
-
-### Which phase
-
-| Work | Phase |
-|---|---|
-| planning, breaking work down, writing a spec | `plan` |
-| writing or changing code | `impl` |
-| verifying behaviour, running or fixing tests | `qa` |
-| reading code to judge it, whether or not it changes | `review` |
-| documentation | `docs` |
-| investigation that produces no artifact | `spike` |
-| tooling, config, environment, release | `ops` |
 
 ## Summary and tags
 

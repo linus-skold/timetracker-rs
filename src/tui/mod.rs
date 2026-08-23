@@ -255,7 +255,7 @@ fn run_tt_skill_install_hooks() {
         None => println!(
             "\ntt-time-logging skill installed, but install-hooks.mjs wasn't found under \
              .claude/skills/ or ~/.claude/skills/ — enforcement hooks were not set up. \
-             See the skill's SKILL.md to run it manually."
+             See the skill's README.md to run it manually."
         ),
     }
 }

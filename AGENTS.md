@@ -1,19 +1,35 @@
 # Time logging contract
 
-For any coding agent working in a repo where the operator tracks time with `tt`.
-Tool-agnostic — this needs a shell and nothing else.
+**Before your first file-changing tool call, open a mark.** Close it when that
+phase of work finishes — not at the end of the session.
 
-Everything here is `tt` itself. Run
-`cargo install --git https://github.com/linus-skold/timetracker-rs` and the whole
-workflow is on your `PATH`.
+```sh
+tt agent begin <project> <issue|-> <phase>
+tt agent touch <project> <issue|-> <phase>                  # still working
+tt agent end   <project> <issue|-> <phase> "<summary>"      # done — logs real elapsed time
+```
 
-Also published as an installable skill — `npx skills add linus-skold/timetracker-rs`
-pulls in `skills/tt-time-logging/SKILL.md`, which mirrors this file. Keep the two
-in sync when either changes.
+`<project>` is `$TT_PROJECT`, else the repo directory name. `<issue>` is the
+issue number, or `-`. `<phase>` is one of:
 
-For Claude Code specifically, `skills/tt-time-logging/SKILL.md` documents a
-one-time `install-hooks.mjs` step that wires this contract into
-`SessionStart`/`Stop` hooks instead of relying on prose alone.
+| Work | Phase |
+|---|---|
+| planning, breaking work down, writing a spec | `plan` |
+| writing or changing code | `impl` |
+| verifying behaviour, running or fixing tests | `qa` |
+| reading code to judge it, whether or not it changes | `review` |
+| documentation | `docs` |
+| investigation that produces no artifact | `spike` |
+| tooling, config, environment, release | `ops` |
+
+Everything below is detail on those three commands.
+
+> **Maintainers:** this file is mirrored by `skills/tt-time-logging/SKILL.md`,
+> published via `npx skills add linus-skold/timetracker-rs`. Keep the two in sync
+> when either changes. Installation, and the one-time `install-hooks.mjs` step
+> that wires this contract into Claude Code's
+> `SessionStart`/`UserPromptSubmit`/`Stop` hooks, are documented in
+> `skills/tt-time-logging/README.md`.
 
 ## Rules
 
@@ -44,24 +60,12 @@ one-time `install-hooks.mjs` step that wires this contract into
   environment manager such as `mise` or `direnv`, `$TT_PROJECT` is a natural thing
   for them to declare there, so the value travels with the repo.)
 - **issue** — the tracked issue number, or `-` if untracked
-- **phase** — one of `plan` `impl` `qa` `review` `docs` `spike` `ops`; see
-  [Which phase](#which-phase)
+- **phase** — one of `plan` `impl` `qa` `review` `docs` `spike` `ops`; see the
+  phase table at the top of this file
 
 **project is a real field** on the entry, not a tag: the agent commands pass it as
 `tt log --project <project>`, so it is stored explicitly rather than guessed. This
 matters when reading rollups back — `tt report` groups on the field.
-
-### Which phase
-
-| Work | Phase |
-|---|---|
-| planning, breaking work down, writing a spec | `plan` |
-| writing or changing code | `impl` |
-| verifying behaviour, running or fixing tests | `qa` |
-| reading code to judge it, whether or not it changes | `review` |
-| documentation | `docs` |
-| investigation that produces no artifact | `spike` |
-| tooling, config, environment, release | `ops` |
 
 ## Summary and tags
 
