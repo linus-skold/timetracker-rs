@@ -1,6 +1,6 @@
 [package]
 name = "timetracker"
-version = "0.7.0"
+version = "0.7.1"
 edition = "2024"
 repository = "https://github.com/linus-skold/timetracker-rs"
 
