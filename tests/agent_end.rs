@@ -9,6 +9,10 @@ mod common;
 #[cfg(unix)]
 use common::Mode;
 use common::{Case, StoreRow, clock, logged_duration, now};
+// Only `an_entry_recorded_with_the_mark_left_behind_exits_74` uses this, and it
+// is unix-only — ungated, this import is dead code on Windows.
+#[cfg(unix)]
+use std::fs;
 
 // --- item ------------------------------------------------------------------
 
