@@ -10,7 +10,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -168,15 +167,7 @@ fn validate_agent(agent: AgentConfig) -> AgentConfig {
 }
 
 fn config_path() -> Option<PathBuf> {
-    resolve_config_path(std::env::var_os("TT_CONFIG_FILE"), default_config_path())
-}
-
-/// The env-free half of [`config_path`], taking the default config file.
-fn resolve_config_path(config_file: Option<OsString>, default: Option<PathBuf>) -> Option<PathBuf> {
-    match config_file {
-        Some(file) if !file.is_empty() => Some(PathBuf::from(file)),
-        _ => default,
-    }
+    crate::paths::env_or(std::env::var_os("TT_CONFIG_FILE"), default_config_path())
 }
 
 #[cfg(windows)]
@@ -453,26 +444,9 @@ pub fn parse_hex_rgb(s: &str) -> Option<(u8, u8, u8)> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn tt_config_file_replaces_the_default_config_file() {
-        let default = || Some(PathBuf::from("default"));
-        assert_eq!(resolve_config_path(None, default()), default());
-        // An empty `TT_CONFIG_FILE` is no setting at all.
-        assert_eq!(resolve_config_path(Some("".into()), default()), default());
-        assert_eq!(
-            resolve_config_path(Some("elsewhere".into()), default()),
-            Some(PathBuf::from("elsewhere"))
-        );
-        assert_eq!(
-            resolve_config_path(None, None),
-            None,
-            "no default, no config file"
-        );
-        assert_eq!(
-            resolve_config_path(Some("elsewhere".into()), None),
-            Some(PathBuf::from("elsewhere"))
-        );
-    }
+    // `TT_CONFIG_FILE`'s override rule is `paths::env_or`, tested there. This
+    // module composes no default of its own beyond `default_config_path`, so
+    // there is nothing left here that was not a second copy of that test.
 
     #[test]
     fn should_onboard_shows_unless_explicitly_opted_out() {

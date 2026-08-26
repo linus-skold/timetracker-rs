@@ -537,10 +537,10 @@ fn article(minutes: i64) -> &'static str {
     }
 }
 
+/// [`crate::time::instant`] with the context this layer owes the operator: a
+/// mark that will not parse names the value that would not.
 fn instant(epoch: i64) -> Result<DateTime<Local>> {
-    DateTime::from_timestamp(epoch, 0)
-        .map(|instant| instant.with_timezone(&Local))
-        .with_context(|| format!("{epoch} is not a valid timestamp"))
+    crate::time::instant(epoch).with_context(|| format!("{epoch} is not a valid timestamp"))
 }
 
 /// One epoch as `HH:MM`, or `??:??` when it is not a valid instant.

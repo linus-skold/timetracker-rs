@@ -15,34 +15,21 @@ use std::path::{Path, PathBuf};
 /// `$TT_ACTIVITY_DIR` when set, else `activity` inside the cache dir —
 /// a sibling of `marks`.
 pub fn activity_dir() -> Option<PathBuf> {
-    resolve_activity_dir(std::env::var_os("TT_ACTIVITY_DIR"), cache_dir())
+    resolve_activity_dir(
+        std::env::var_os("TT_ACTIVITY_DIR"),
+        crate::paths::cache_dir(),
+    )
 }
 
-/// Same cache root [`crate::marks::mark_dir`] resolves from.
-fn cache_dir() -> Option<PathBuf> {
-    let dirs = directories::ProjectDirs::from("com", "timetracker", "tt")?;
-    Some(dirs.cache_dir().to_path_buf())
-}
-
+/// The env-free half of [`activity_dir`]. The override rule is
+/// [`crate::paths::env_or`]; the variable and the `activity` subdirectory are
+/// this module's own — a sibling of `marks`, from the same cache root.
 fn resolve_activity_dir(activity_dir: Option<OsString>, cache: Option<PathBuf>) -> Option<PathBuf> {
-    match activity_dir {
-        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
-        _ => Some(cache?.join("activity")),
-    }
+    crate::paths::env_or(activity_dir, Some(cache?.join("activity")))
 }
 
-/// Sanitised the same way [`crate::marks::mark_key`] sanitises a mark's key.
 fn session_key(session_id: &str) -> String {
-    session_id
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    crate::paths::sanitise_key(session_id)
 }
 
 fn session_path(dir: &Path, session_id: &str) -> PathBuf {
@@ -331,21 +318,15 @@ mod tests {
         assert_eq!(read_sessions_in(&dir), Vec::new());
     }
 
+    /// The override rule itself is covered once, in `paths::env_or`. What is
+    /// this module's own is the subdirectory it defaults to — a sibling of
+    /// `marks`, never the same directory.
     #[test]
     fn the_default_directory_is_activity_inside_the_app_cache_dir() {
         let cache = || Some(PathBuf::from("cache"));
         assert_eq!(
             resolve_activity_dir(None, cache()),
             Some(PathBuf::from("cache").join("activity"))
-        );
-        assert_eq!(
-            resolve_activity_dir(Some("".into()), cache()),
-            Some(PathBuf::from("cache").join("activity")),
-            "an empty TT_ACTIVITY_DIR is no setting at all"
-        );
-        assert_eq!(
-            resolve_activity_dir(Some("elsewhere".into()), cache()),
-            Some(PathBuf::from("elsewhere"))
         );
         assert_eq!(
             resolve_activity_dir(None, None),

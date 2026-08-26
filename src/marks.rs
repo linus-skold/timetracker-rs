@@ -111,22 +111,14 @@ pub fn rows_at(marks: &[Mark], now: DateTime<Local>) -> Vec<String> {
 /// `marks` inside this app's cache directory. `None` only when there is no home
 /// directory to resolve.
 pub fn mark_dir() -> Option<PathBuf> {
-    resolve_mark_dir(std::env::var_os("TT_MARK_DIR"), cache_dir())
+    resolve_mark_dir(std::env::var_os("TT_MARK_DIR"), crate::paths::cache_dir())
 }
 
-/// This app's cache directory, from the same `ProjectDirs` triple
-/// `storage::get_data_path` uses, so a sandboxed `HOME` redirects the marks too.
-fn cache_dir() -> Option<PathBuf> {
-    let dirs = directories::ProjectDirs::from("com", "timetracker", "tt")?;
-    Some(dirs.cache_dir().to_path_buf())
-}
-
-/// The env-free half of [`mark_dir`], taking the resolved cache root.
+/// The env-free half of [`mark_dir`], taking the resolved cache root. The
+/// override rule itself is [`crate::paths::env_or`]; what is this module's own
+/// is the variable it reads and the `marks` subdirectory it defaults to.
 fn resolve_mark_dir(mark_dir: Option<OsString>, cache: Option<PathBuf>) -> Option<PathBuf> {
-    match mark_dir {
-        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
-        _ => Some(cache?.join("marks")),
-    }
+    crate::paths::env_or(mark_dir, Some(cache?.join("marks")))
 }
 
 /// Every open mark, newest first. A missing mark directory is an empty list.
@@ -172,7 +164,7 @@ pub fn open_marks_in(dir: &Path) -> Vec<Mark> {
 fn read_start(path: &Path) -> Option<DateTime<Local>> {
     let contents = fs::read_to_string(path).ok()?;
     let seconds: i64 = contents.trim().parse().ok()?;
-    Some(DateTime::from_timestamp(seconds, 0)?.with_timezone(&Local))
+    crate::time::instant(seconds)
 }
 
 /// Parse one mark file, or `None` if it is not one.
@@ -235,16 +227,7 @@ pub enum Touch {
 /// written literally. Build every mark and beats path from this one key, or a
 /// phase can end up with beats it cannot find again.
 pub fn mark_key(project: &str, issue: &str, phase: &str) -> String {
-    format!("{project}.{issue}.{phase}")
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
+    crate::paths::sanitise_key(&format!("{project}.{issue}.{phase}"))
 }
 
 pub fn mark_path(dir: &Path, key: &str) -> PathBuf {
@@ -496,9 +479,7 @@ mod tests {
     }
 
     fn at(seconds: i64) -> DateTime<Local> {
-        DateTime::from_timestamp(seconds, 0)
-            .unwrap()
-            .with_timezone(&Local)
+        crate::time::instant(seconds).unwrap()
     }
 
     fn labels(marks: &[Mark]) -> Vec<(String, Option<String>, String)> {
@@ -603,6 +584,8 @@ mod tests {
         );
     }
 
+    /// The override rule itself is covered once, in `paths::env_or`. What is
+    /// this module's own is the subdirectory it defaults to.
     #[test]
     fn the_default_directory_is_marks_inside_the_app_cache_dir() {
         let cache = || Some(PathBuf::from("cache"));
@@ -610,24 +593,10 @@ mod tests {
             resolve_mark_dir(None, cache()),
             Some(PathBuf::from("cache").join("marks"))
         );
-        // An empty `TT_MARK_DIR` is no setting at all.
-        assert_eq!(
-            resolve_mark_dir(Some("".into()), cache()),
-            Some(PathBuf::from("cache").join("marks"))
-        );
-        assert_eq!(
-            resolve_mark_dir(Some("elsewhere".into()), cache()),
-            Some(PathBuf::from("elsewhere"))
-        );
         assert_eq!(
             resolve_mark_dir(None, None),
             None,
             "no cache dir, no default"
-        );
-        // …but an override alone is enough to run.
-        assert_eq!(
-            resolve_mark_dir(Some("elsewhere".into()), None),
-            Some(PathBuf::from("elsewhere"))
         );
     }
 
@@ -656,16 +625,10 @@ mod tests {
             project: "tt".into(),
             issue: Some("14".into()),
             phase: "impl".into(),
-            start: DateTime::from_timestamp(seconds, 0)
-                .unwrap()
-                .with_timezone(&Local),
+            start: crate::time::instant(seconds).unwrap(),
         };
         let start = 1_000_000_000;
-        let now = |offset: i64| {
-            DateTime::from_timestamp(start + offset, 0)
-                .unwrap()
-                .with_timezone(&Local)
-        };
+        let now = |offset: i64| crate::time::instant(start + offset).unwrap();
 
         assert_eq!(mark(start).elapsed_at(now(0)), "0m");
         assert_eq!(mark(start).elapsed_at(now(119)), "1m", "seconds truncate");

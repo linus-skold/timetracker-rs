@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use std::{
-    ffi::OsString,
     fs::{self, File},
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
@@ -11,10 +10,7 @@ use crate::tracker;
 /// The per-OS directory `data.json` (and anything that wants to live beside
 /// it, e.g. the update-check cache) lives in.
 pub fn get_data_dir() -> Result<PathBuf> {
-    // com.timetracker.tt
-    let default = directories::ProjectDirs::from("com", "timetracker", "tt")
-        .map(|dirs| dirs.data_dir().to_path_buf());
-    let data_dir = resolve_data_dir(std::env::var_os("TT_DATA_DIR"), default)
+    let data_dir = crate::paths::env_or(std::env::var_os("TT_DATA_DIR"), crate::paths::data_dir())
         .context("Could not determine config directory")?;
     fs::create_dir_all(&data_dir)?;
     Ok(data_dir)
@@ -22,14 +18,6 @@ pub fn get_data_dir() -> Result<PathBuf> {
 
 pub fn get_data_path() -> Result<PathBuf> {
     Ok(get_data_dir()?.join("data.json"))
-}
-
-/// The env-free half of [`get_data_path`], taking the default store directory.
-fn resolve_data_dir(data_dir: Option<OsString>, default: Option<PathBuf>) -> Option<PathBuf> {
-    match data_dir {
-        Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
-        _ => default,
-    }
 }
 
 /// A cheap staleness fingerprint of a path — a file or a directory alike.
@@ -210,20 +198,7 @@ mod tests {
         );
     }
 
-    #[test]
-    fn tt_data_dir_replaces_the_default_store_directory() {
-        let default = || Some(PathBuf::from("default"));
-        assert_eq!(resolve_data_dir(None, default()), default());
-        // An empty `TT_DATA_DIR` is no setting at all.
-        assert_eq!(resolve_data_dir(Some("".into()), default()), default());
-        assert_eq!(
-            resolve_data_dir(Some("elsewhere".into()), default()),
-            Some(PathBuf::from("elsewhere"))
-        );
-        assert_eq!(resolve_data_dir(None, None), None, "no default, no store");
-        assert_eq!(
-            resolve_data_dir(Some("elsewhere".into()), None),
-            Some(PathBuf::from("elsewhere"))
-        );
-    }
+    // `TT_DATA_DIR`'s override rule is `paths::env_or`, tested there. This
+    // module composes no default of its own beyond `paths::data_dir`, so there
+    // is nothing left here that was not a second copy of that test.
 }

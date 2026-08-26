@@ -13,6 +13,7 @@ use chrono::{DateTime, Local};
 
 use crate::activity::Session;
 use crate::marks::{self, Mark};
+use crate::time::instant;
 use crate::tracker::{IdleInterval, TimeEntry};
 
 /// One activity window with no evidence it was tracked.
@@ -190,10 +191,6 @@ fn covered_by_entry(project: &str, start: i64, end: i64, entries: &[TimeEntry], 
             let entry_end = entry.end_time.map(|t| t.timestamp()).unwrap_or(now);
             overlaps(entry.start_time.timestamp(), entry_end, start, end)
         })
-}
-
-fn instant(epoch: i64) -> Option<DateTime<Local>> {
-    DateTime::from_timestamp(epoch, 0).map(|instant| instant.with_timezone(&Local))
 }
 
 #[cfg(test)]
