@@ -9,7 +9,6 @@ mod common;
 #[cfg(unix)]
 use common::Mode;
 use common::{Case, StoreRow, clock, logged_duration, now};
-use std::fs;
 
 // --- item ------------------------------------------------------------------
 

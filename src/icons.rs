@@ -16,7 +16,8 @@ struct Icons {
 
 impl Icons {
     fn from_config(cfg: &config::IconsConfig) -> Self {
-        let icon = |s: &Option<String>, default: &str| s.clone().unwrap_or_else(|| default.to_string());
+        let icon =
+            |s: &Option<String>, default: &str| s.clone().unwrap_or_else(|| default.to_string());
 
         Icons {
             active: icon(&cfg.active, "▶️"),

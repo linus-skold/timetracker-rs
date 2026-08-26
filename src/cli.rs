@@ -1,8 +1,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDate, TimeZone};
+use clap::builder::PossibleValuesParser;
 use clap::{Parser, Subcommand};
 use clap_complete::ArgValueCandidates;
-use clap::builder::PossibleValuesParser;
 
 use crate::completions;
 
@@ -176,7 +176,9 @@ pub fn completions(shell: Option<&str>) -> Result<()> {
             "nu" => "tt completions nu | save -f ($nu.user-autoload-dirs.0 | path join tt-completer.nu)   # run once".to_string(),
             _ => format!("eval \"$(tt completions {name})\"   # ~/.{name}rc"),
         };
-        eprintln!("\nTo enable completion, run this once or add it to your shell startup file:\n  {line}");
+        eprintln!(
+            "\nTo enable completion, run this once or add it to your shell startup file:\n  {line}"
+        );
     }
     Ok(())
 }

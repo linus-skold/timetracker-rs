@@ -7,8 +7,8 @@ impl App {
         let mut entries = self.scope_entries();
 
         match self.sort_order {
-            SortOrder::NewestFirst => entries.sort_by(|a, b| b.start_time.cmp(&a.start_time)),
-            SortOrder::OldestFirst => entries.sort_by(|a, b| a.start_time.cmp(&b.start_time)),
+            SortOrder::NewestFirst => entries.sort_by_key(|e| std::cmp::Reverse(e.start_time)),
+            SortOrder::OldestFirst => entries.sort_by_key(|e| e.start_time),
         }
 
         // OR within a pane's includes, AND across the two; exclusions veto first.

@@ -584,7 +584,9 @@ fn strip_stray_tags(summary: &str) -> String {
 /// The phase vocabulary, in the order the docs list it. `src/report.rs` reads it
 /// back off the stored tags, so it must stay the one list. Not used to validate
 /// the `phase` argument: any word is accepted.
-pub const PHASES: [&str; 8] = ["plan", "impl", "qa", "review", "docs", "spike", "explore", "ops"];
+pub const PHASES: [&str; 8] = [
+    "plan", "impl", "qa", "review", "docs", "spike", "explore", "ops",
+];
 
 /// The description `cli::log` is given: the summary, then one tag per axis the
 /// `project` field cannot express — the item (omitted for the `-` sentinel), the

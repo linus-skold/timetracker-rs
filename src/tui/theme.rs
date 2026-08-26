@@ -50,8 +50,8 @@ impl Theme {
             duration_high: color(&cfg.duration_high, (239, 154, 154)), // Light red
             duration_med: color(&cfg.duration_med, (255, 224, 130)), // Light yellow
             duration_low: color(&cfg.duration_low, (165, 214, 167)), // Light green
-            border: color(&cfg.border, (88, 88, 88)), // Border gray
-            title: color(&cfg.title, (186, 186, 186)), // Light gray
+            border: color(&cfg.border, (88, 88, 88)),    // Border gray
+            title: color(&cfg.title, (186, 186, 186)),   // Light gray
 
             entry_duration_high_h: dur.entry_high_hours.unwrap_or(4),
             entry_duration_med_h: dur.entry_med_hours.unwrap_or(2),

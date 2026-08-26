@@ -74,16 +74,31 @@ fn nu_returns_the_same_candidates_as_bash() {
     for name in ["start", "stop", "log", "report", "agent", "completions"] {
         assert!(sub.contains(&name.to_string()), "missing {name} in {sub:?}");
     }
-    assert_eq!(complete_nu(&case, &["start", "--project", ""]), complete(&case, 3, &["start", "--project", ""]));
-    assert_eq!(complete_nu(&case, &["agent", "begin", "alpha", ""]), complete(&case, 4, &["agent", "begin", "alpha", ""]));
-    assert_eq!(complete_nu(&case, &["agent", "begin", ""]), complete(&case, 3, &["agent", "begin", ""]));
-    assert_eq!(complete_nu(&case, &["agent", "begin", "alpha", "-", ""]), complete(&case, 5, &["agent", "begin", "alpha", "-", ""]));
+    assert_eq!(
+        complete_nu(&case, &["start", "--project", ""]),
+        complete(&case, 3, &["start", "--project", ""])
+    );
+    assert_eq!(
+        complete_nu(&case, &["agent", "begin", "alpha", ""]),
+        complete(&case, 4, &["agent", "begin", "alpha", ""])
+    );
+    assert_eq!(
+        complete_nu(&case, &["agent", "begin", ""]),
+        complete(&case, 3, &["agent", "begin", ""])
+    );
+    assert_eq!(
+        complete_nu(&case, &["agent", "begin", "alpha", "-", ""]),
+        complete(&case, 5, &["agent", "begin", "alpha", "-", ""])
+    );
 }
 
 #[test]
 fn nu_whitespace_span_completes_like_an_empty_span() {
     let case = seeded("completions-nu-space");
-    assert_eq!(complete_nu(&case, &["start", "--project", " "]), ["alpha", "beta", "gamma"]);
+    assert_eq!(
+        complete_nu(&case, &["start", "--project", " "]),
+        ["alpha", "beta", "gamma"]
+    );
 }
 
 #[test]
@@ -107,8 +122,14 @@ fn project_flag_completes_from_store_and_open_marks() {
 #[test]
 fn issue_positional_is_scoped_to_the_typed_project() {
     let case = seeded("completions-issues-scoped");
-    assert_eq!(complete(&case, 4, &["agent", "begin", "alpha", ""]), ["-", "10", "11"]);
-    assert_eq!(complete(&case, 4, &["agent", "begin", "gamma", ""]), ["-", "30"]);
+    assert_eq!(
+        complete(&case, 4, &["agent", "begin", "alpha", ""]),
+        ["-", "10", "11"]
+    );
+    assert_eq!(
+        complete(&case, 4, &["agent", "begin", "gamma", ""]),
+        ["-", "30"]
+    );
 }
 
 #[test]
@@ -123,7 +144,9 @@ fn phase_positional_completes_the_fixed_vocabulary() {
     let case = seeded("completions-phases");
     assert_eq!(
         complete(&case, 5, &["agent", "begin", "alpha", "10", ""]),
-        ["plan", "impl", "qa", "review", "docs", "spike", "explore", "ops"]
+        [
+            "plan", "impl", "qa", "review", "docs", "spike", "explore", "ops"
+        ]
     );
 }
 
@@ -141,7 +164,10 @@ fn a_completion_run_leaves_the_store_and_its_lock_untouched() {
 
     assert_eq!(fs::metadata(&store).unwrap().modified().unwrap(), before);
     assert_eq!(fs::read_to_string(&store).unwrap(), body_before);
-    assert!(!lock.exists(), "a completion run must not create the store lock");
+    assert!(
+        !lock.exists(),
+        "a completion run must not create the store lock"
+    );
 }
 
 #[test]
@@ -152,7 +178,10 @@ fn the_completions_subcommand_prints_the_same_hook_as_the_env_protocol() {
         sub.assert_status(0);
         let env = case.run_bare_with_env(&[], &[("COMPLETE", shell)]);
         env.assert_status(0);
-        assert!(sub.stdout.contains("COMPLETE"), "{shell}: no COMPLETE in hook");
+        assert!(
+            sub.stdout.contains("COMPLETE"),
+            "{shell}: no COMPLETE in hook"
+        );
         assert_eq!(sub.stdout, env.stdout, "{shell}: the two surfaces diverge");
     }
 }
@@ -162,7 +191,12 @@ fn an_unknown_shell_is_an_error_naming_the_choices() {
     let case = Case::new("completions-unknown-shell");
     let run = case.run_bare_with_env(&["completions"], &[("SHELL", "/bin/tcsh")]);
     assert_ne!(run.status, Some(0));
-    assert!(run.stderr.contains("bash, elvish, fish, nu, powershell, zsh"), "{}", run.stderr);
+    assert!(
+        run.stderr
+            .contains("bash, elvish, fish, nu, powershell, zsh"),
+        "{}",
+        run.stderr
+    );
 }
 
 #[test]

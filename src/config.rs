@@ -237,10 +237,10 @@ fn resolve_include_path(raw: &str, including_file: &Path) -> PathBuf {
 }
 
 fn expand_tilde(raw: &str) -> PathBuf {
-    if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
-        if let Some(base) = directories::BaseDirs::new() {
-            return base.home_dir().join(rest);
-        }
+    if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\"))
+        && let Some(base) = directories::BaseDirs::new()
+    {
+        return base.home_dir().join(rest);
     }
     PathBuf::from(raw)
 }

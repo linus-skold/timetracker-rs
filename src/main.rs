@@ -15,8 +15,8 @@ mod tracker;
 mod tui;
 mod update;
 
-use cli::{Cli, Commands};
 use clap::{CommandFactory, Parser};
+use cli::{Cli, Commands};
 
 fn main() -> Result<()> {
     // Exits the process on a completion request, so nothing below — including

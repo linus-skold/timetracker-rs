@@ -185,7 +185,10 @@ pub fn perform_update(check_only: bool, yes: bool) -> Result<()> {
                 Ok(())
             }
             Some(latest) => {
-                println!("tt {current_version} is up to date (latest: {}).", latest.version);
+                println!(
+                    "tt {current_version} is up to date (latest: {}).",
+                    latest.version
+                );
                 Ok(())
             }
             None => {

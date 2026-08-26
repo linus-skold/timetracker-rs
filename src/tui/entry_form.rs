@@ -1,15 +1,24 @@
-use anyhow::Result;
-use chrono::{DateTime, Local, NaiveDate};
 use super::App;
 use super::types::{InputField, InputMode, ViewMode};
+use anyhow::Result;
+use chrono::{DateTime, Local, NaiveDate};
+
+/// A submittable form resolved into the fields `add_entry` takes: description,
+/// tags, start, and the end an open entry does not have.
+type EntryFields = (
+    String,
+    Vec<String>,
+    DateTime<Local>,
+    Option<DateTime<Local>>,
+);
 
 impl App {
     pub(crate) fn start_adding(&mut self) {
         // In week view, snap selected_date to the day under the cursor.
-        if self.view_mode == ViewMode::Week {
-            if let Some(date) = self.date_under_cursor() {
-                self.selected_date = date;
-            }
+        if self.view_mode == ViewMode::Week
+            && let Some(date) = self.date_under_cursor()
+        {
+            self.selected_date = date;
         }
         self.input_mode = InputMode::AddingEntry;
         self.input_field = InputField::Description;
@@ -45,7 +54,9 @@ impl App {
                         entry.project.clone().unwrap_or_default(),
                         entry.tags.join(" "),
                         entry.start_time.format("%Y-%m-%d %H:%M").to_string(),
-                        entry.end_time.map(|t| t.format("%Y-%m-%d %H:%M").to_string()),
+                        entry
+                            .end_time
+                            .map(|t| t.format("%Y-%m-%d %H:%M").to_string()),
                         entry.end_time.map(|_| entry.format_duration()),
                     )
                 })
@@ -69,12 +80,17 @@ impl App {
     /// Validates the current form input and resolves it into entry fields.
     /// Returns `None` if the form isn't currently submittable (empty
     /// description, unresolvable start/end times).
-    fn build_entry_fields(&self) -> Option<(String, Vec<String>, DateTime<Local>, Option<DateTime<Local>>)> {
+    fn build_entry_fields(&self) -> Option<EntryFields> {
         if self.input_description.is_empty() {
             return None;
         }
         let (start_time, end_time) = self.resolve_times()?;
-        Some((self.input_description.clone(), self.parse_tags(), start_time, end_time))
+        Some((
+            self.input_description.clone(),
+            self.parse_tags(),
+            start_time,
+            end_time,
+        ))
     }
 
     pub(crate) fn submit_entry(&mut self) -> Result<()> {
@@ -160,9 +176,19 @@ impl App {
             InputField::Duration => &mut self.input_duration,
         };
         let actual_pos = pos.min(s.chars().count());
-        if actual_pos == 0 { return; }
-        let byte_start = s.char_indices().nth(actual_pos - 1).map(|(i, _)| i).unwrap_or(s.len());
-        let byte_end = s.char_indices().nth(actual_pos).map(|(i, _)| i).unwrap_or(s.len());
+        if actual_pos == 0 {
+            return;
+        }
+        let byte_start = s
+            .char_indices()
+            .nth(actual_pos - 1)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
+        let byte_end = s
+            .char_indices()
+            .nth(actual_pos)
+            .map(|(i, _)| i)
+            .unwrap_or(s.len());
         s.drain(byte_start..byte_end);
         self.cursor_pos = actual_pos - 1;
     }
@@ -258,7 +284,8 @@ impl App {
             (None, None, Some(d)) => {
                 // Anchored to selected_date, so a past day's entry lands on that day.
                 let now_time = Local::now().time();
-                let end = self.selected_date
+                let end = self
+                    .selected_date
                     .and_time(now_time)
                     .and_local_timezone(Local)
                     .single()
@@ -277,9 +304,17 @@ impl App {
         let end_str = self.input_end_time.clone();
         let dur_str = self.input_duration.clone();
 
-        let start = if !start_str.is_empty() { self.parse_time_str(&start_str) } else { None };
-        let end   = if !end_str.is_empty()   { self.parse_time_str(&end_str)   } else { None };
-        let dur   = if !dur_str.is_empty() {
+        let start = if !start_str.is_empty() {
+            self.parse_time_str(&start_str)
+        } else {
+            None
+        };
+        let end = if !end_str.is_empty() {
+            self.parse_time_str(&end_str)
+        } else {
+            None
+        };
+        let dur = if !dur_str.is_empty() {
             let d = crate::duration::parse(&dur_str);
             if d.num_seconds() > 0 { Some(d) } else { None }
         } else {
@@ -349,10 +384,10 @@ impl App {
         // DD/MM
         if s.contains('/') {
             let mut parts = s.splitn(2, '/');
-            if let (Some(d), Some(m)) = (parts.next(), parts.next()) {
-                if let (Ok(day), Ok(month)) = (d.parse::<u32>(), m.parse::<u32>()) {
-                    return NaiveDate::from_ymd_opt(current_year, month, day);
-                }
+            if let (Some(d), Some(m)) = (parts.next(), parts.next())
+                && let (Ok(day), Ok(month)) = (d.parse::<u32>(), m.parse::<u32>())
+            {
+                return NaiveDate::from_ymd_opt(current_year, month, day);
             }
         }
         // YYYY-MM-DD
@@ -383,7 +418,9 @@ impl App {
         let (hour, minute) = if let Some(colon_pos) = rest.find(':') {
             let h: u32 = rest[..colon_pos].trim().parse().ok()?;
             let m: u32 = rest[colon_pos + 1..].trim().parse().ok()?;
-            if m > 59 { return None; }
+            if m > 59 {
+                return None;
+            }
             (h, m)
         } else {
             let h: u32 = rest.trim().parse().ok()?;
@@ -391,7 +428,9 @@ impl App {
         };
 
         let hour_24 = if is_12h {
-            if hour == 0 || hour > 12 { return None; }
+            if hour == 0 || hour > 12 {
+                return None;
+            }
             match (is_pm, hour) {
                 (false, 12) => 0,
                 (true, 12) => 12,

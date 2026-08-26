@@ -20,7 +20,10 @@ impl App {
     }
 
     pub(crate) fn onboarding_is_checked(&self, surface: LayoutSurface) -> bool {
-        let idx = LayoutSurface::ALL.iter().position(|s| *s == surface).unwrap();
+        let idx = LayoutSurface::ALL
+            .iter()
+            .position(|s| *s == surface)
+            .unwrap();
         self.onboarding_checked[idx]
     }
 

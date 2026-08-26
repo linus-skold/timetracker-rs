@@ -76,7 +76,12 @@ fn candidate_json(c: &CompletionCandidate) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
     obj.insert("value".into(), c.get_value().to_string_lossy().into());
     if let Some(help) = c.get_help() {
-        let first = help.to_string().lines().next().unwrap_or_default().to_string();
+        let first = help
+            .to_string()
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_string();
         obj.insert("description".into(), first.into());
     }
     serde_json::Value::Object(obj)
@@ -196,14 +201,16 @@ mod tests {
     fn nu_complete(words: &[&str]) -> Vec<serde_json::Value> {
         let args = words.iter().map(OsString::from).collect();
         let mut buf = Vec::new();
-        Nu.write_complete(&mut Cli::command(), args, None, &mut buf).unwrap();
+        Nu.write_complete(&mut Cli::command(), args, None, &mut buf)
+            .unwrap();
         serde_json::from_slice(&buf).unwrap()
     }
 
     #[test]
     fn nu_registration_calls_tt_by_name_and_attaches_the_completer() {
         let mut buf = Vec::new();
-        Nu.write_registration("COMPLETE", "tt", "tt", "/abs/path/tt", &mut buf).unwrap();
+        Nu.write_registration("COMPLETE", "tt", "tt", "/abs/path/tt", &mut buf)
+            .unwrap();
         let script = String::from_utf8(buf).unwrap();
         assert!(script.contains("@complete tt-completer"));
         assert!(script.contains("def tt-completer [spans: list<string>]"));
@@ -218,13 +225,24 @@ mod tests {
         assert_eq!(got, [serde_json::json!({"value": "impl"})]);
         let subs = nu_complete(&["tt", "compl"]);
         assert_eq!(subs[0]["value"], "completions");
-        assert!(subs[0]["description"].as_str().unwrap().starts_with("Print the shell completion hook"));
+        assert!(
+            subs[0]["description"]
+                .as_str()
+                .unwrap()
+                .starts_with("Print the shell completion hook")
+        );
     }
 
     #[test]
     fn nu_whitespace_span_completes_like_an_empty_one() {
-        assert_eq!(nu_complete(&["tt", "agent", "begin", "p", "-", " "]), nu_complete(&["tt", "agent", "begin", "p", "-", ""]));
-        let values: Vec<_> = nu_complete(&["tt", "agent", "begin", "p", "-", ""]).into_iter().filter(|v| !v["value"].as_str().unwrap().starts_with("--")).collect();
+        assert_eq!(
+            nu_complete(&["tt", "agent", "begin", "p", "-", " "]),
+            nu_complete(&["tt", "agent", "begin", "p", "-", ""])
+        );
+        let values: Vec<_> = nu_complete(&["tt", "agent", "begin", "p", "-", ""])
+            .into_iter()
+            .filter(|v| !v["value"].as_str().unwrap().starts_with("--"))
+            .collect();
         assert_eq!(values.len(), PHASES.len());
     }
 
@@ -237,7 +255,10 @@ mod tests {
             entry(Some(""), &[]),
         ]);
         let names = project_names(&d, &[mark("alpha", None), mark("mid", None)]);
-        assert_eq!(names.into_iter().collect::<Vec<_>>(), ["alpha", "mid", "zeta"]);
+        assert_eq!(
+            names.into_iter().collect::<Vec<_>>(),
+            ["alpha", "mid", "zeta"]
+        );
     }
 
     #[test]
@@ -247,21 +268,31 @@ mod tests {
             entry(Some("b"), &["b/20"]),
             entry(Some("a"), &["a/"]),
         ]);
-        let marks = [mark("a", Some("11")), mark("b", Some("21")), mark("a", None)];
+        let marks = [
+            mark("a", Some("11")),
+            mark("b", Some("21")),
+            mark("a", None),
+        ];
         let scoped = issue_names(&d, &marks, Some("a"));
         assert_eq!(scoped.into_iter().collect::<Vec<_>>(), ["-", "10", "11"]);
     }
 
     #[test]
     fn issues_unfiltered_without_project() {
-        let d = data(vec![entry(Some("a"), &["a/10"]), entry(Some("b"), &["b/20"])]);
+        let d = data(vec![
+            entry(Some("a"), &["a/10"]),
+            entry(Some("b"), &["b/20"]),
+        ]);
         let all = issue_names(&d, &[mark("b", Some("21"))], None);
         assert_eq!(all.into_iter().collect::<Vec<_>>(), ["-", "10", "20", "21"]);
     }
 
     #[test]
     fn phases_are_the_canonical_list() {
-        let got: Vec<String> = phases().iter().map(|c| c.get_value().to_string_lossy().into_owned()).collect();
+        let got: Vec<String> = phases()
+            .iter()
+            .map(|c| c.get_value().to_string_lossy().into_owned())
+            .collect();
         assert_eq!(got, PHASES);
     }
 
@@ -280,9 +311,21 @@ mod tests {
     #[test]
     fn typed_project_is_none_on_odd_shapes() {
         assert_eq!(typed_project(argv(&["/bin/tt"])), None);
-        assert_eq!(typed_project(argv(&["/bin/tt", "tt", "agent", "begin", "proj"])), None);
-        assert_eq!(typed_project(argv(&["/bin/tt", "--", "tt", "agent", "begin"])), None);
-        assert_eq!(typed_project(argv(&["/bin/tt", "--", "tt", "agent", "begin", ""])), None);
-        assert_eq!(typed_project(argv(&["/bin/tt", "--", "tt", "start", "--project", ""])), None);
+        assert_eq!(
+            typed_project(argv(&["/bin/tt", "tt", "agent", "begin", "proj"])),
+            None
+        );
+        assert_eq!(
+            typed_project(argv(&["/bin/tt", "--", "tt", "agent", "begin"])),
+            None
+        );
+        assert_eq!(
+            typed_project(argv(&["/bin/tt", "--", "tt", "agent", "begin", ""])),
+            None
+        );
+        assert_eq!(
+            typed_project(argv(&["/bin/tt", "--", "tt", "start", "--project", ""])),
+            None
+        );
     }
 }

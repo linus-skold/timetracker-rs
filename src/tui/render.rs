@@ -453,7 +453,10 @@ pub fn render_help_popup(f: &mut Frame, app: &mut App) {
         if i > 0 {
             lines.push(Line::from(""));
         }
-        lines.push(Line::from(Span::styled(format!("{INSET}{title}"), heading_style)));
+        lines.push(Line::from(Span::styled(
+            format!("{INSET}{title}"),
+            heading_style,
+        )));
         for (k, d) in rows.iter() {
             let pad = key_width - Span::raw(*k).width() + GAP;
             lines.push(Line::from(vec![
@@ -487,7 +490,11 @@ pub fn render_help_popup(f: &mut Frame, app: &mut App) {
     let max_offset = lines.len().saturating_sub(visible);
     app.help_scroll = app.help_scroll.min(max_offset);
     let more_below = app.help_scroll < max_offset;
-    let shown = if more_below { visible.saturating_sub(1) } else { visible };
+    let shown = if more_below {
+        visible.saturating_sub(1)
+    } else {
+        visible
+    };
     let mut page: Vec<Line> = lines
         .into_iter()
         .skip(app.help_scroll)
