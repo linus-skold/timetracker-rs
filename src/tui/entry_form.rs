@@ -208,12 +208,10 @@ impl App {
         } else {
             None
         };
-        let dur = if !self.input_duration.is_empty() {
-            let d = crate::duration::parse(self.input_duration.value());
-            if d.num_seconds() > 0 { Some(d) } else { None }
-        } else {
-            None
-        };
+        // A half-typed or unparseable duration is "not yet resolvable", the same
+        // as a zero-length one — never an error while the user is still typing.
+        let dur =
+            crate::duration::parse(self.input_duration.value()).filter(|d| d.num_seconds() > 0);
 
         match (start, end, dur) {
             (Some(s), _, Some(d)) => Some((s, Some(s + d))),
@@ -252,12 +250,7 @@ impl App {
         } else {
             None
         };
-        let dur = if !dur_str.is_empty() {
-            let d = crate::duration::parse(&dur_str);
-            if d.num_seconds() > 0 { Some(d) } else { None }
-        } else {
-            None
-        };
+        let dur = crate::duration::parse(&dur_str).filter(|d| d.num_seconds() > 0);
 
         match leaving_field {
             InputField::StartTime => {
