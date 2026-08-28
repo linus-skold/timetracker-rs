@@ -2848,4 +2848,169 @@ mod tests {
         app.submit_edit().unwrap();
         assert_eq!(on_disk().entries[0].project, None);
     }
+    // --- derived-view cache invalidation -------------------------------------
+    //
+    // `filtered_entries` and `pane_values` are cached against a key holding every
+    // input they read (see `tui::cache`). The tests below warm both caches, cross
+    // one mutation boundary, and assert the derived view moved with it — a cache
+    // that failed to notice that boundary goes stale here.
+
+    /// Fill both caches, so the assertion after a mutation is a real re-read.
+    fn warm(app: &App) {
+        let _ = app.filtered_entries();
+        let _ = app.pane_values(Pane::Projects);
+        let _ = app.pane_values(Pane::Tags);
+    }
+
+    /// The rows in view by description, name-sorted so the assertion does not
+    /// also pin the sort order.
+    fn in_view_sorted(app: &App) -> Vec<String> {
+        let mut rows = in_view(app);
+        rows.sort();
+        rows
+    }
+
+    /// `mutate_store` — add, edit and delete all replace `data` through it.
+    #[test]
+    fn the_derived_views_follow_a_store_mutation() {
+        let _guard = env_guard();
+        sandbox("cache-mutate");
+        seed(vec![entry(0, "first")], 1);
+        let mut app = App::new().unwrap();
+        app.view_mode = ViewMode::All;
+        warm(&app);
+
+        app.mutate_store(|data| {
+            data.add_entry(
+                "second".to_string(),
+                Some("acme".to_string()),
+                vec!["new".to_string()],
+                Local::now(),
+                Some(Local::now()),
+            );
+        })
+        .unwrap();
+        assert_eq!(in_view_sorted(&app), vec!["first", "second"]);
+        assert_eq!(values(&app, Pane::Projects), "acme=1");
+        assert_eq!(values(&app, Pane::Tags), "new=1");
+
+        warm(&app);
+        app.mutate_store(|data| data.entries[0].description = "renamed".to_string())
+            .unwrap();
+        assert_eq!(in_view_sorted(&app), vec!["renamed", "second"]);
+
+        warm(&app);
+        app.delete_entry(0).unwrap();
+        assert_eq!(in_view_sorted(&app), vec!["second"]);
+        assert_eq!(values(&app, Pane::Projects), "acme=1");
+    }
+
+    /// `set_view_mode`, `previous_period`/`next_period` and `go_to_today`.
+    #[test]
+    fn the_derived_views_follow_the_view_mode_and_period() {
+        let _guard = env_guard();
+        sandbox("cache-scope");
+        let mut app = seed_panes();
+
+        app.set_view_mode(ViewMode::Day);
+        assert_eq!(in_view_sorted(&app), vec!["a", "b", "c", "f"]);
+
+        warm(&app);
+        app.set_view_mode(ViewMode::Week);
+        assert_eq!(in_view_sorted(&app), vec!["a", "b", "c", "d", "f"]);
+        assert_eq!(values(&app, Pane::Projects), "tt=2 loremind=1 vinge=1");
+
+        warm(&app);
+        app.previous_period();
+        assert_eq!(in_view_sorted(&app), vec!["e"]);
+        assert_eq!(values(&app, Pane::Projects), "vinge=1");
+
+        warm(&app);
+        app.next_period();
+        assert_eq!(in_view_sorted(&app), vec!["a", "b", "c", "d", "f"]);
+
+        warm(&app);
+        app.previous_period();
+        app.go_to_today();
+        assert_eq!(in_view_sorted(&app), vec!["a", "b", "c", "d", "f"]);
+    }
+
+    /// `toggle_sort_order` — same rows, reversed.
+    #[test]
+    fn the_entries_view_follows_the_sort_order() {
+        let _guard = env_guard();
+        sandbox("cache-sort");
+        let mut app = seed_panes();
+        app.view_mode = ViewMode::All;
+        let newest_first = in_view(&app);
+        warm(&app);
+
+        app.toggle_sort_order();
+        let oldest_first = in_view(&app);
+        // Same rows, ends swapped. Not an exact reverse: same-second ties keep
+        // their order under a stable sort.
+        assert_ne!(newest_first, oldest_first);
+        assert_eq!(oldest_first.first(), newest_first.last());
+        assert_eq!(oldest_first.last(), newest_first.first());
+    }
+
+    /// `cycle_pane_value` and `clear_filters`, which move the rows but never the
+    /// pane values — those are offered before any filter.
+    #[test]
+    fn the_entries_view_follows_a_pane_filter() {
+        let _guard = env_guard();
+        sandbox("cache-filter");
+        let mut app = seed_panes();
+        app.view_mode = ViewMode::Day;
+        warm(&app);
+
+        point_at(&mut app, Pane::Projects, "tt");
+        app.cycle_pane_value(true);
+        assert_eq!(in_view_sorted(&app), vec!["a", "b"]);
+        assert_eq!(values(&app, Pane::Projects), "tt=2 loremind=1");
+
+        warm(&app);
+        app.clear_filters();
+        assert_eq!(in_view_sorted(&app), vec!["a", "b", "c", "f"]);
+    }
+
+    /// `handle_search_char`, `handle_search_backspace` and `clear_search`.
+    #[test]
+    fn the_entries_view_follows_the_search_term() {
+        let _guard = env_guard();
+        sandbox("cache-search");
+        let mut app = seed_panes();
+        app.view_mode = ViewMode::Day;
+        warm(&app);
+
+        for c in "loremind".chars() {
+            app.handle_search_char(c);
+        }
+        assert_eq!(in_view_sorted(&app), vec!["c"]);
+
+        warm(&app);
+        app.handle_search_backspace();
+        assert_eq!(in_view_sorted(&app), vec!["c"]);
+
+        warm(&app);
+        app.clear_search();
+        assert_eq!(in_view_sorted(&app), vec!["a", "b", "c", "f"]);
+    }
+
+    /// `sync_from_store` — a write from outside the TUI, which reloads `data`.
+    #[test]
+    fn the_derived_views_follow_an_outside_write() {
+        let _guard = env_guard();
+        sandbox("cache-sync");
+        seed(vec![entry(0, "first")], 1);
+        let mut app = App::new().unwrap();
+        app.view_mode = ViewMode::All;
+        warm(&app);
+
+        agent_write("outside");
+        app.sync_from_store().unwrap();
+        assert_eq!(in_view_sorted(&app), vec!["first", "outside"]);
+        assert_eq!(values(&app, Pane::Projects), "probe=1");
+        assert_eq!(values(&app, Pane::Tags), "probe=1");
+    }
 }
