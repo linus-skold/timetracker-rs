@@ -191,7 +191,12 @@ Durations are used with `tt log -t`. Supported formats:
 | `2h`    | 2 hours         |
 | `45m`   | 45 minutes      |
 | `1h30m` | 1 hour 30 min   |
+| `1h 30m`| 1 hour 30 min   |
 | `90`    | 90 minutes      |
+
+`h`/`m` may be upper or lower case. Anything outside these forms — `hello`,
+`1x30`, `-45m`, `1h30` — is a usage error, not a zero-length or partially
+honoured entry.
 
 ---
 
