@@ -54,7 +54,14 @@ fn main() -> Result<()> {
             project,
             json,
         } => {
-            return commands::report(*all, *week, *since, *until, project.clone(), *json);
+            return commands::report(commands::ReportRequest {
+                all: *all,
+                week: *week,
+                since: *since,
+                until: *until,
+                project: project.clone(),
+                json: *json,
+            });
         }
         Commands::Update { check, yes } => {
             return commands::update(*check, *yes);
@@ -95,7 +102,15 @@ fn main() -> Result<()> {
             project,
             idle,
             trim,
-        } => commands::log(description, time, tags, project, idle, trim, None),
+        } => commands::log(commands::LogRequest {
+            description,
+            time,
+            extra_tags: tags,
+            project,
+            idle,
+            trim,
+            ended_at: None,
+        }),
         Commands::Today => commands::today(),
         Commands::Report {
             all,
@@ -104,7 +119,14 @@ fn main() -> Result<()> {
             until,
             project,
             json,
-        } => commands::report(all, week, since, until, project, json),
+        } => commands::report(commands::ReportRequest {
+            all,
+            week,
+            since,
+            until,
+            project,
+            json,
+        }),
         Commands::List { limit } => commands::list(limit),
         Commands::Tui => tui::run_tui(update_notice),
         Commands::Status => commands::status(),

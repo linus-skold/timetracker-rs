@@ -171,19 +171,34 @@ pub fn stop() -> Result<()> {
     Ok(())
 }
 
+/// One finished entry to record, as [`log`] takes it.
+pub struct LogRequest {
+    pub description: String,
+    /// Duration in `tt log -t` form, e.g. "1h30m".
+    pub time: String,
+    /// Tags to add on top of the ones parsed out of the description.
+    pub extra_tags: Vec<String>,
+    pub project: Option<String>,
+    pub idle: Vec<IdleInterval>,
+    pub trim: bool,
+    /// Pins the timeline; see [`log`].
+    pub ended_at: Option<DateTime<Local>>,
+}
+
 /// Record a finished entry, back-dated from its end. `ended_at` pins the
 /// timeline and must be the mark's last heartbeat whenever `idle` intervals are
 /// passed, or the recorded silence lands outside the entry.
-pub fn log(
-    description: String,
-    time_str: String,
-    extra_tags: Vec<String>,
-    project: Option<String>,
-    idle: Vec<IdleInterval>,
-    trim: bool,
-    ended_at: Option<DateTime<Local>>,
-) -> Result<()> {
-    let dur = duration::parse(&time_str);
+pub fn log(request: LogRequest) -> Result<()> {
+    let LogRequest {
+        description,
+        time,
+        extra_tags,
+        project,
+        idle,
+        trim,
+        ended_at,
+    } = request;
+    let dur = duration::parse(&time);
     let end_time = ended_at.unwrap_or_else(Local::now);
     let start_time = end_time - dur;
 
@@ -309,17 +324,28 @@ pub fn update(check: bool, yes: bool) -> Result<()> {
     crate::update::perform_update(check, yes)
 }
 
+/// What `tt report` was asked for: the scope selectors, then the filter and the
+/// output format. Mirrors [`crate::cli::Commands::Report`]'s fields.
+pub struct ReportRequest {
+    pub all: bool,
+    pub week: bool,
+    pub since: Option<NaiveDate>,
+    pub until: Option<NaiveDate>,
+    pub project: Option<String>,
+    pub json: bool,
+}
+
 /// `tt report` — the rollup surface; see `src/report.rs` for the maths. Dispatched
 /// ahead of the preamble in `main.rs`, so it migrates its own in-memory copy.
-#[allow(clippy::too_many_arguments)]
-pub fn report(
-    all: bool,
-    week: bool,
-    since: Option<NaiveDate>,
-    until: Option<NaiveDate>,
-    project: Option<String>,
-    json: bool,
-) -> Result<()> {
+pub fn report(request: ReportRequest) -> Result<()> {
+    let ReportRequest {
+        all,
+        week,
+        since,
+        until,
+        project,
+        json,
+    } = request;
     let mut data = load_data()?;
     crate::tracker::migrate(&mut data);
     let today = Local::now().date_naive();
@@ -362,7 +388,16 @@ mod tests {
                 project,
                 idle,
                 trim,
-            } => log(description, time, tags, project, idle, trim, None).unwrap(),
+            } => log(LogRequest {
+                description,
+                time,
+                extra_tags: tags,
+                project,
+                idle,
+                trim,
+                ended_at: None,
+            })
+            .unwrap(),
             _ => panic!("parse_log produced something other than a Log command"),
         }
     }

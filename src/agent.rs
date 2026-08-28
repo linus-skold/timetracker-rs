@@ -299,15 +299,15 @@ fn run_audit(auto_log: bool) -> Result<()> {
 /// docs/decisions/0002-auto-logging-unaccounted-activity.md.
 fn write_auto_log(item: &audit::Unaccounted) -> Result<()> {
     let minutes = item.end.signed_duration_since(item.start).num_minutes();
-    commands::log(
-        "unattended activity #auto".to_string(),
-        format!("{}m", round_five(minutes)),
-        Vec::new(),
-        Some(item.project.clone()),
-        item.idle.clone(),
-        true,
-        Some(item.end),
-    )
+    commands::log(commands::LogRequest {
+        description: "unattended activity #auto".to_string(),
+        time: format!("{}m", round_five(minutes)),
+        extra_tags: Vec::new(),
+        project: Some(item.project.clone()),
+        idle: item.idle.clone(),
+        trim: true,
+        ended_at: Some(item.end),
+    })
 }
 
 /// `tt agent item <project> <issue|-> <phase> <summary> <minutes>`: log one
@@ -327,16 +327,7 @@ fn item(
         std::process::exit(64);
     };
     let minutes = whole_minutes(minutes);
-    log_entry(
-        project,
-        issue,
-        phase,
-        summary,
-        minutes,
-        Vec::new(),
-        false,
-        None,
-    )
+    log_entry(project, issue, phase, summary, minutes, Span::unmarked())
 }
 
 /// A minutes argument, or exit 64 with `minutes must be a whole number, got
@@ -353,29 +344,46 @@ fn whole_minutes(raw: &str) -> i64 {
     }
 }
 
+/// The timeline `log_entry` records the entry on: the flagged silence, whether
+/// to cut it out, and where the span ends. `ended_at` is the mark's last
+/// heartbeat for a mark-derived close and `None` where there is no mark
+/// timeline to pin to.
+struct Span {
+    idle: Vec<IdleInterval>,
+    trim: bool,
+    ended_at: Option<DateTime<Local>>,
+}
+
+impl Span {
+    /// A span with no mark behind it: no silence, nothing to trim, no anchor.
+    fn unmarked() -> Self {
+        Span {
+            idle: Vec::new(),
+            trim: false,
+            ended_at: None,
+        }
+    }
+}
+
 /// Log the entry both `item` and `end` end at. `extra_tags` stays empty: every
-/// tag is already in the description. `ended_at` is the mark's last heartbeat for
-/// a mark-derived close and `None` where there is no mark timeline to pin to.
-#[allow(clippy::too_many_arguments)]
+/// tag is already in the description.
 fn log_entry(
     project: &str,
     issue: &str,
     phase: &str,
     summary: &str,
     minutes: i64,
-    idle: Vec<IdleInterval>,
-    trim: bool,
-    ended_at: Option<DateTime<Local>>,
+    span: Span,
 ) -> Result<()> {
-    commands::log(
-        description(project, issue, phase, summary),
-        format!("{}m", round_five(minutes)),
-        Vec::new(),
-        Some(project.to_string()),
-        idle,
-        trim,
-        ended_at,
-    )
+    commands::log(commands::LogRequest {
+        description: description(project, issue, phase, summary),
+        time: format!("{}m", round_five(minutes)),
+        extra_tags: Vec::new(),
+        project: Some(project.to_string()),
+        idle: span.idle,
+        trim: span.trim,
+        ended_at: span.ended_at,
+    })
 }
 
 /// `tt agent end <project> <issue|-> <phase> <summary> [minutes|--full|--trim]`:
@@ -477,9 +485,11 @@ fn end(
         phase,
         summary,
         minutes,
-        idle,
-        split_at_idle,
-        anchor,
+        Span {
+            idle,
+            trim: split_at_idle,
+            ended_at: anchor,
+        },
     )?;
     // Cleared only once the entry is recorded, on every successful close; a
     // refusal returned above with the mark and its beats left in place.
