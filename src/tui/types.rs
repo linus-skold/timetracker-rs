@@ -1,4 +1,4 @@
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ViewMode {
     All,
     Day,
@@ -27,7 +27,7 @@ impl ViewMode {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum InputMode {
     Normal,
     AddingEntry,
@@ -81,7 +81,7 @@ impl ConfirmAction {
 /// A destructive action asked for and not yet answered. **`entry_id` is captured
 /// when the prompt is raised, not read back when it is answered** — the 250 ms poll
 /// can move the table cursor while the prompt is on screen.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub struct PendingConfirm {
     pub action: ConfirmAction,
     pub entry_id: u64,
@@ -89,7 +89,7 @@ pub struct PendingConfirm {
     pub from: InputMode,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum InputField {
     Description,
     Project,
@@ -169,7 +169,7 @@ pub enum Focus {
     Pane(Pane),
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum SortOrder {
     NewestFirst,
     OldestFirst,
