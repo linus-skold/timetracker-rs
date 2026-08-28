@@ -38,7 +38,7 @@ if ($pathEntries -notcontains $InstallDir) {
     Write-Host "$InstallDir is already on your PATH."
 }
 
-# Mirrors the per-shell hint table in src/cli.rs (`completions`).
+# Mirrors the per-shell hint table in src/commands.rs (`completions`).
 $previousErrorAction = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
 & $dest completions --help *> $null

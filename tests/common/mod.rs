@@ -373,7 +373,7 @@ pub fn round_five(minutes: i64) -> i64 {
     (((minutes + 4) / 5) * 5).max(5)
 }
 
-/// The `- Duration:` tail `cli::log` prints for `minutes` — the figure it was asked
+/// The `- Duration:` tail `commands::log` prints for `minutes` — the figure it was asked
 /// for, never the stored span.
 pub fn logged_duration(minutes: i64) -> String {
     let rounded = round_five(minutes);
@@ -399,7 +399,7 @@ impl Run {
         );
     }
 
-    /// The minutes `cli::log` said it logged, read off its own output — the requested
+    /// The minutes `commands::log` said it logged, read off its own output — the requested
     /// figure, before any split, never the stored span.
     pub fn logged_minutes(&self) -> i64 {
         let tail = self

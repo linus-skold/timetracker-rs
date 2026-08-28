@@ -72,7 +72,7 @@ case ":$PATH:" in
     ;;
 esac
 
-# Mirrors the per-shell hint table in src/cli.rs (`completions`).
+# Mirrors the per-shell hint table in src/commands.rs (`completions`).
 if "$INSTALL_DIR/tt" completions --help >/dev/null 2>&1; then
   echo
   echo "Shell completion is available. To enable it, run:"

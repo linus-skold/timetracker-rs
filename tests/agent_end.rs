@@ -1,7 +1,7 @@
 //! `tt agent item` and `tt agent end`: a one-shot log, and closing an open mark on
 //! the span derived from its timestamps and heartbeats.
 //!
-//! Observables are `cli::log`'s stdout line and the sandbox's `data.json`; every
+//! Observables are `commands::log`'s stdout line and the sandbox's `data.json`; every
 //! expectation is derived from the fixture, never written down. Sandbox: [`common`].
 
 mod common;
@@ -439,7 +439,7 @@ fn the_unvouched_threshold_is_configurable() {
 
 // --- idle and trim ---------------------------------------------------------
 //
-// `cli::log` takes the intervals as values and splits inside the same store
+// `commands::log` takes the intervals as values and splits inside the same store
 // transaction, so these assert on the epoch pairs in the sandbox's `data.json`.
 
 /// Two holes in one phase, so the *order* of the recorded intervals matters.
