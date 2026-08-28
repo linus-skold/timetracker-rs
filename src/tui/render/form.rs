@@ -36,7 +36,7 @@ pub(super) fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     let search_text = if is_active && app.search_term.is_empty() {
         "Type to search... (Enter to confirm, Esc to clear)"
     } else {
-        &app.search_term
+        app.search_term.value()
     };
 
     let search_input = Paragraph::new(search_text)
@@ -49,14 +49,8 @@ pub(super) fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(search_input, area);
 
     if is_active {
-        let byte_idx = app
-            .search_term
-            .char_indices()
-            .nth(app.cursor_pos)
-            .map(|(i, _)| i)
-            .unwrap_or(app.search_term.len());
         f.set_cursor_position((
-            area.x + Line::from(&app.search_term[..byte_idx]).width() as u16 + 1,
+            area.x + Line::from(app.search_term.before_cursor()).width() as u16 + 1,
             area.y + 1,
         ));
     }
@@ -113,60 +107,48 @@ pub(super) fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
 
     let active = app.input_field;
 
-    f.render_widget(
-        Paragraph::new(app.input_description.as_str())
-            .style(Style::default().fg(Color::White))
-            .block(field_block(
-                " Description ",
-                active == InputField::Description,
-            )),
-        chunks[0],
-    );
-    f.render_widget(
-        Paragraph::new(app.input_project.as_str())
-            .style(Style::default().fg(Color::White))
-            .block(field_block(
-                " Project (optional: single name, e.g. acme) ",
-                active == InputField::Project,
-            )),
-        chunks[1],
-    );
-    f.render_widget(
-        Paragraph::new(app.input_tags.as_str())
-            .style(Style::default().fg(Color::White))
-            .block(field_block(
-                " Tags (space-separated, e.g., work meeting) ",
-                active == InputField::Tags,
-            )),
-        chunks[2],
-    );
-    f.render_widget(
-        Paragraph::new(app.input_duration.as_str())
-            .style(Style::default().fg(Color::White))
-            .block(field_block(
-                " Duration (optional: 1h30m, 45m, 2h) ",
-                active == InputField::Duration,
-            )),
-        chunks[3],
-    );
-    f.render_widget(
-        Paragraph::new(app.input_start_time.as_str())
-            .style(Style::default().fg(Color::White))
-            .block(field_block(
-                " Start Time (e.g. 9am, 14:30, 25/03 9.30am) ",
-                active == InputField::StartTime,
-            )),
-        chunks[4],
-    );
-    f.render_widget(
-        Paragraph::new(app.input_end_time.as_str())
-            .style(Style::default().fg(Color::White))
-            .block(field_block(
-                " End Time (optional: e.g. 9am, 14:30, 25/03 9.30am) ",
-                active == InputField::EndTime,
-            )),
-        chunks[5],
-    );
+    // In chunk order, which is also the Tab order.
+    let fields = [
+        (
+            InputField::Description,
+            &app.input_description,
+            " Description ",
+        ),
+        (
+            InputField::Project,
+            &app.input_project,
+            " Project (optional: single name, e.g. acme) ",
+        ),
+        (
+            InputField::Tags,
+            &app.input_tags,
+            " Tags (space-separated, e.g., work meeting) ",
+        ),
+        (
+            InputField::Duration,
+            &app.input_duration,
+            " Duration (optional: 1h30m, 45m, 2h) ",
+        ),
+        (
+            InputField::StartTime,
+            &app.input_start_time,
+            " Start Time (e.g. 9am, 14:30, 25/03 9.30am) ",
+        ),
+        (
+            InputField::EndTime,
+            &app.input_end_time,
+            " End Time (optional: e.g. 9am, 14:30, 25/03 9.30am) ",
+        ),
+    ];
+
+    for (i, (field, input, label)) in fields.into_iter().enumerate() {
+        f.render_widget(
+            Paragraph::new(input.value())
+                .style(Style::default().fg(Color::White))
+                .block(field_block(label, active == field)),
+            chunks[i],
+        );
+    }
 
     let help = Paragraph::new(Line::from(vec![
         Span::styled("Tab", Style::default().fg(theme::accent())),
@@ -191,39 +173,12 @@ pub(super) fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     );
     f.render_widget(help, chunks[6]);
 
-    let cursor_text_width = |text: &str, pos: usize| -> u16 {
-        let byte_idx = text
-            .char_indices()
-            .nth(pos)
-            .map(|(i, _)| i)
-            .unwrap_or(text.len());
-        Line::from(&text[..byte_idx]).width() as u16
-    };
-    let (cursor_x, cursor_y) = match app.input_field {
-        InputField::Description => (
-            chunks[0].x + cursor_text_width(&app.input_description, app.cursor_pos) + 1,
-            chunks[0].y + 1,
-        ),
-        InputField::Project => (
-            chunks[1].x + cursor_text_width(&app.input_project, app.cursor_pos) + 1,
-            chunks[1].y + 1,
-        ),
-        InputField::Tags => (
-            chunks[2].x + cursor_text_width(&app.input_tags, app.cursor_pos) + 1,
-            chunks[2].y + 1,
-        ),
-        InputField::Duration => (
-            chunks[3].x + cursor_text_width(&app.input_duration, app.cursor_pos) + 1,
-            chunks[3].y + 1,
-        ),
-        InputField::StartTime => (
-            chunks[4].x + cursor_text_width(&app.input_start_time, app.cursor_pos) + 1,
-            chunks[4].y + 1,
-        ),
-        InputField::EndTime => (
-            chunks[5].x + cursor_text_width(&app.input_end_time, app.cursor_pos) + 1,
-            chunks[5].y + 1,
-        ),
-    };
-    f.set_cursor_position((cursor_x, cursor_y));
+    if let Some((i, (_, input, _))) = fields
+        .into_iter()
+        .enumerate()
+        .find(|(_, (field, _, _))| *field == active)
+    {
+        let width = Line::from(input.before_cursor()).width() as u16;
+        f.set_cursor_position((chunks[i].x + width + 1, chunks[i].y + 1));
+    }
 }

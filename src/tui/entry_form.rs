@@ -1,4 +1,5 @@
 use super::App;
+use super::text_input::TextInput;
 use super::types::{InputField, InputMode, ViewMode};
 use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDate};
@@ -22,25 +23,22 @@ impl App {
         }
         self.input_mode = InputMode::AddingEntry;
         self.input_field = InputField::Description;
-        self.input_description.clear();
-        self.input_project.clear();
-        self.input_tags.clear();
-        self.input_start_time.clear();
-        self.input_end_time.clear();
-        self.input_duration.clear();
-        self.cursor_pos = 0;
+        self.clear_form_fields();
     }
 
     pub(crate) fn cancel_adding(&mut self) {
         self.input_mode = InputMode::Normal;
+        self.clear_form_fields();
+        self.editing_entry_id = None;
+    }
+
+    fn clear_form_fields(&mut self) {
         self.input_description.clear();
         self.input_project.clear();
         self.input_tags.clear();
         self.input_start_time.clear();
         self.input_end_time.clear();
         self.input_duration.clear();
-        self.editing_entry_id = None;
-        self.cursor_pos = 0;
     }
 
     pub(crate) fn start_editing(&mut self) {
@@ -65,15 +63,14 @@ impl App {
 
         if let Some((id, description, project, tags, start_time, end_time, duration)) = entry_data {
             self.editing_entry_id = Some(id);
-            self.input_description = description;
-            self.input_project = project;
-            self.input_tags = tags;
-            self.input_start_time = start_time;
-            self.input_end_time = end_time.unwrap_or_default();
-            self.input_duration = duration.unwrap_or_default();
+            self.input_description.set_from(&description);
+            self.input_project.set_from(&project);
+            self.input_tags.set_from(&tags);
+            self.input_start_time.set_from(&start_time);
+            self.input_end_time.set_from(&end_time.unwrap_or_default());
+            self.input_duration.set_from(&duration.unwrap_or_default());
             self.input_mode = InputMode::EditingEntry;
             self.input_field = InputField::Description;
-            self.cursor_pos = self.input_description.chars().count();
         }
     }
 
@@ -86,7 +83,7 @@ impl App {
         }
         let (start_time, end_time) = self.resolve_times()?;
         Some((
-            self.input_description.clone(),
+            self.input_description.value().to_string(),
             self.parse_tags(),
             start_time,
             end_time,
@@ -133,7 +130,7 @@ impl App {
             InputField::StartTime => InputField::EndTime,
             InputField::EndTime => InputField::Description,
         };
-        self.cursor_pos = self.active_field_input().chars().count();
+        self.field_mut().cursor_to_end();
     }
 
     pub(crate) fn prev_input_field(&mut self) {
@@ -147,112 +144,53 @@ impl App {
             InputField::StartTime => InputField::Duration,
             InputField::EndTime => InputField::StartTime,
         };
-        self.cursor_pos = self.active_field_input().chars().count();
+        self.field_mut().cursor_to_end();
     }
 
     pub(crate) fn handle_input_char(&mut self, c: char) {
-        let pos = self.cursor_pos;
-        let s = match self.input_field {
-            InputField::Description => &mut self.input_description,
-            InputField::Project => &mut self.input_project,
-            InputField::Tags => &mut self.input_tags,
-            InputField::StartTime => &mut self.input_start_time,
-            InputField::EndTime => &mut self.input_end_time,
-            InputField::Duration => &mut self.input_duration,
-        };
-        let byte_idx = s.char_indices().nth(pos).map(|(i, _)| i).unwrap_or(s.len());
-        s.insert(byte_idx, c);
-        self.cursor_pos += 1;
+        self.field_mut().insert(c);
     }
 
     pub(crate) fn handle_input_backspace(&mut self) {
-        let pos = self.cursor_pos;
-        let s = match self.input_field {
-            InputField::Description => &mut self.input_description,
-            InputField::Project => &mut self.input_project,
-            InputField::Tags => &mut self.input_tags,
-            InputField::StartTime => &mut self.input_start_time,
-            InputField::EndTime => &mut self.input_end_time,
-            InputField::Duration => &mut self.input_duration,
-        };
-        let actual_pos = pos.min(s.chars().count());
-        if actual_pos == 0 {
-            return;
-        }
-        let byte_start = s
-            .char_indices()
-            .nth(actual_pos - 1)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
-        let byte_end = s
-            .char_indices()
-            .nth(actual_pos)
-            .map(|(i, _)| i)
-            .unwrap_or(s.len());
-        s.drain(byte_start..byte_end);
-        self.cursor_pos = actual_pos - 1;
+        self.field_mut().backspace();
     }
 
     // ── Cursor movement ───────────────────────────────────────────────────────
 
-    /// Returns the text of the currently active form field (not search).
-    pub(crate) fn active_field_input(&self) -> &str {
+    /// The one place the `InputField` -> field mapping lives.
+    pub(crate) fn field_mut(&mut self) -> &mut TextInput {
         match self.input_field {
-            InputField::Description => &self.input_description,
-            InputField::Project => &self.input_project,
-            InputField::Tags => &self.input_tags,
-            InputField::StartTime => &self.input_start_time,
-            InputField::EndTime => &self.input_end_time,
-            InputField::Duration => &self.input_duration,
+            InputField::Description => &mut self.input_description,
+            InputField::Project => &mut self.input_project,
+            InputField::Tags => &mut self.input_tags,
+            InputField::StartTime => &mut self.input_start_time,
+            InputField::EndTime => &mut self.input_end_time,
+            InputField::Duration => &mut self.input_duration,
         }
     }
 
-    /// The active input's text in any mode — form field or search bar.
-    fn active_input(&self) -> &str {
+    /// The active input in any mode — form field or search bar.
+    pub(crate) fn active_input(&mut self) -> &mut TextInput {
         match self.input_mode {
-            super::types::InputMode::Searching => &self.search_term,
-            _ => self.active_field_input(),
+            InputMode::Searching => &mut self.search_term,
+            _ => self.field_mut(),
         }
     }
 
     pub(crate) fn move_cursor_left(&mut self) {
-        let clamped = self.cursor_pos.min(self.active_input().chars().count());
-        self.cursor_pos = clamped.saturating_sub(1);
+        self.active_input().left();
     }
 
     pub(crate) fn move_cursor_right(&mut self) {
-        let len = self.active_input().chars().count();
-        let clamped = self.cursor_pos.min(len);
-        self.cursor_pos = (clamped + 1).min(len);
+        self.active_input().right();
     }
 
-    /// Jump left past whitespace/punctuation, then past the preceding word.
     pub(crate) fn move_cursor_word_left(&mut self) {
-        let input = self.active_input().to_string();
-        let chars: Vec<char> = input.chars().collect();
-        let mut pos = self.cursor_pos.min(chars.len());
-        while pos > 0 && !chars[pos - 1].is_alphanumeric() {
-            pos -= 1;
-        }
-        while pos > 0 && chars[pos - 1].is_alphanumeric() {
-            pos -= 1;
-        }
-        self.cursor_pos = pos;
+        self.active_input().word_left();
     }
 
-    /// Jump right past the current word, then past any trailing whitespace/punctuation.
     pub(crate) fn move_cursor_word_right(&mut self) {
-        let input = self.active_input().to_string();
-        let chars: Vec<char> = input.chars().collect();
-        let len = chars.len();
-        let mut pos = self.cursor_pos.min(len);
-        while pos < len && chars[pos].is_alphanumeric() {
-            pos += 1;
-        }
-        while pos < len && !chars[pos].is_alphanumeric() {
-            pos += 1;
-        }
-        self.cursor_pos = pos;
+        self.active_input().word_right();
     }
 
     // ── Time resolution ──────────────────────────────────────────────────────
@@ -261,17 +199,17 @@ impl App {
     /// Start+End, End+Duration, Duration only (ends now), Start only (still active).
     pub(crate) fn resolve_times(&self) -> Option<(DateTime<Local>, Option<DateTime<Local>>)> {
         let start = if !self.input_start_time.is_empty() {
-            self.parse_time_str(&self.input_start_time)
+            self.parse_time_str(self.input_start_time.value())
         } else {
             None
         };
         let end = if !self.input_end_time.is_empty() {
-            self.parse_time_str(&self.input_end_time)
+            self.parse_time_str(self.input_end_time.value())
         } else {
             None
         };
         let dur = if !self.input_duration.is_empty() {
-            let d = crate::duration::parse(&self.input_duration);
+            let d = crate::duration::parse(self.input_duration.value());
             if d.num_seconds() > 0 { Some(d) } else { None }
         } else {
             None
@@ -300,9 +238,9 @@ impl App {
     /// Tabbing off Start / End / Duration derives whichever of the other two is still
     /// blank, preferring to adjust the field the user did not just leave.
     pub(crate) fn apply_time_calculations(&mut self, leaving_field: InputField) {
-        let start_str = self.input_start_time.clone();
-        let end_str = self.input_end_time.clone();
-        let dur_str = self.input_duration.clone();
+        let start_str = self.input_start_time.value().to_string();
+        let end_str = self.input_end_time.value().to_string();
+        let dur_str = self.input_duration.value().to_string();
 
         let start = if !start_str.is_empty() {
             self.parse_time_str(&start_str)
@@ -324,31 +262,36 @@ impl App {
         match leaving_field {
             InputField::StartTime => {
                 if let (Some(s), Some(d)) = (start, dur) {
-                    self.input_end_time = (s + d).format("%Y-%m-%d %H:%M").to_string();
+                    self.input_end_time
+                        .set_from(&(s + d).format("%Y-%m-%d %H:%M").to_string());
                 } else if let (Some(s), Some(e), None) = (start, end, dur) {
                     let diff = e.signed_duration_since(s);
                     if diff.num_seconds() > 0 {
-                        self.input_duration = crate::duration::format(diff);
+                        self.input_duration.set_from(&crate::duration::format(diff));
                     }
                 }
             }
             InputField::EndTime => {
                 if let (Some(_s), Some(e), Some(d)) = (start, end, dur) {
-                    self.input_start_time = (e - d).format("%Y-%m-%d %H:%M").to_string();
+                    self.input_start_time
+                        .set_from(&(e - d).format("%Y-%m-%d %H:%M").to_string());
                 } else if let (Some(s), Some(e), None) = (start, end, dur) {
                     let diff = e.signed_duration_since(s);
                     if diff.num_seconds() > 0 {
-                        self.input_duration = crate::duration::format(diff);
+                        self.input_duration.set_from(&crate::duration::format(diff));
                     }
                 } else if let (None, Some(e), Some(d)) = (start, end, dur) {
-                    self.input_start_time = (e - d).format("%Y-%m-%d %H:%M").to_string();
+                    self.input_start_time
+                        .set_from(&(e - d).format("%Y-%m-%d %H:%M").to_string());
                 }
             }
             InputField::Duration => {
                 if let (Some(s), Some(d)) = (start, dur) {
-                    self.input_end_time = (s + d).format("%Y-%m-%d %H:%M").to_string();
+                    self.input_end_time
+                        .set_from(&(s + d).format("%Y-%m-%d %H:%M").to_string());
                 } else if let (None, Some(e), Some(d)) = (start, end, dur) {
-                    self.input_start_time = (e - d).format("%Y-%m-%d %H:%M").to_string();
+                    self.input_start_time
+                        .set_from(&(e - d).format("%Y-%m-%d %H:%M").to_string());
                 }
             }
             _ => {}
@@ -456,7 +399,7 @@ impl App {
 
     /// The project as typed, trimmed; an empty field means "no project".
     fn parse_project(&self) -> Option<String> {
-        let project = self.input_project.trim();
+        let project = self.input_project.value().trim();
         if project.is_empty() {
             None
         } else {
@@ -466,6 +409,7 @@ impl App {
 
     fn parse_tags(&self) -> Vec<String> {
         self.input_tags
+            .value()
             .split_whitespace()
             .map(|s| s.trim_start_matches('#').to_string())
             .filter(|s| !s.is_empty())

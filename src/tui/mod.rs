@@ -14,6 +14,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend, widgets::TableState};
 use std::io::{self, Stdout};
+use text_input::TextInput;
 
 mod entry_form;
 mod marks_surface;
@@ -23,6 +24,7 @@ mod panes;
 mod render;
 mod search;
 mod summary;
+mod text_input;
 pub mod theme;
 pub mod types;
 
@@ -41,13 +43,13 @@ pub(crate) struct App {
     /// Top row of the help popup; clamped by the renderer, so it may run ahead.
     pub(crate) help_scroll: usize,
     pub(crate) input_field: InputField,
-    pub(crate) input_description: String,
-    pub(crate) input_project: String,
-    pub(crate) input_tags: String,
-    pub(crate) input_start_time: String,
-    pub(crate) input_end_time: String,
-    pub(crate) input_duration: String,
-    pub(crate) search_term: String,
+    pub(crate) input_description: TextInput,
+    pub(crate) input_project: TextInput,
+    pub(crate) input_tags: TextInput,
+    pub(crate) input_start_time: TextInput,
+    pub(crate) input_end_time: TextInput,
+    pub(crate) input_duration: TextInput,
+    pub(crate) search_term: TextInput,
     /// Each pane's tri-state filter. OR within a pane's includes, AND across the two.
     pub(crate) project_filter: panes::PaneFilter,
     pub(crate) tag_filter: panes::PaneFilter,
@@ -55,8 +57,6 @@ pub(crate) struct App {
     /// What `InputMode::Confirm` is asking about: the action, entry and origin mode.
     pub(crate) pending_confirm: Option<PendingConfirm>,
     pub(crate) sort_order: SortOrder,
-    /// Cursor position in the active input field — a char index, not a byte index.
-    pub(crate) cursor_pos: usize,
     /// Fingerprint of the store as of the last load, so a tick can skip the read.
     pub(crate) store_stamp: Option<PathStamp>,
     /// The open agent phase marks, newest first, so a frame never reads the directory.
@@ -140,19 +140,18 @@ impl App {
             input_mode: InputMode::Normal,
             help_scroll: 0,
             input_field: InputField::Description,
-            input_description: String::new(),
-            input_project: String::new(),
-            input_tags: String::new(),
-            input_start_time: String::new(),
-            input_end_time: String::new(),
-            input_duration: String::new(),
-            search_term: String::new(),
+            input_description: TextInput::default(),
+            input_project: TextInput::default(),
+            input_tags: TextInput::default(),
+            input_start_time: TextInput::default(),
+            input_end_time: TextInput::default(),
+            input_duration: TextInput::default(),
+            search_term: TextInput::default(),
             project_filter: panes::PaneFilter::default(),
             tag_filter: panes::PaneFilter::default(),
             editing_entry_id: None,
             pending_confirm: None,
             sort_order: SortOrder::NewestFirst,
-            cursor_pos: 0,
             show_projects: layout.show_projects.unwrap_or(false),
             show_tags: layout.show_tags.unwrap_or(false),
             show_marks: layout.show_agents.unwrap_or(false),
@@ -704,8 +703,8 @@ mod tests {
         assert_eq!(agent_id, 1);
 
         app.start_adding();
-        app.input_description = "from the tui".to_string();
-        app.input_duration = "15m".to_string();
+        app.input_description.set_from("from the tui");
+        app.input_duration.set_from("15m");
         app.submit_entry().unwrap();
 
         let data = on_disk();
@@ -763,10 +762,10 @@ mod tests {
             InputMode::Searching,
         ] {
             app.input_mode = mode;
-            app.input_description = "half typed".to_string();
+            app.input_description.set_from("half typed");
             app.sync_from_store().unwrap();
             assert_eq!(descriptions(&app.data), vec!["first"]);
-            assert_eq!(app.input_description, "half typed");
+            assert_eq!(app.input_description.value(), "half typed");
         }
 
         // …and the change is picked up once the mode is Normal again.
@@ -897,7 +896,7 @@ mod tests {
         agent_write("probe");
         select(&mut app, "before");
         app.start_editing();
-        app.input_description = "after".to_string();
+        app.input_description.set_from("after");
         app.submit_edit().unwrap();
 
         let data = on_disk();
@@ -914,15 +913,15 @@ mod tests {
 
         let mut app = App::new().unwrap();
         app.start_adding();
-        app.input_description = "with a project".to_string();
-        app.input_project = "  acme  ".to_string();
-        app.input_duration = "15m".to_string();
+        app.input_description.set_from("with a project");
+        app.input_project.set_from("  acme  ");
+        app.input_duration.set_from("15m");
         app.submit_entry().unwrap();
 
         app.start_adding();
-        app.input_description = "without one".to_string();
-        app.input_project = "   ".to_string();
-        app.input_duration = "15m".to_string();
+        app.input_description.set_from("without one");
+        app.input_project.set_from("   ");
+        app.input_duration.set_from("15m");
         app.submit_entry().unwrap();
 
         let data = on_disk();
@@ -1067,7 +1066,7 @@ mod tests {
         let before = app.pane_values(Pane::Tags);
 
         app.tag_filter.cycle("plan", true);
-        app.search_term = "nothing matches this".to_string();
+        app.search_term.set_from("nothing matches this");
         assert!(app.filtered_entries().is_empty(), "filter did not bite");
         assert_eq!(app.pane_values(Pane::Tags), before);
         assert_eq!(app.pane_values(Pane::Projects).len(), 2);
@@ -2770,7 +2769,7 @@ mod tests {
         );
         assert_eq!(app.project_summary(), before);
 
-        app.search_term = "nothing matches this".to_string();
+        app.search_term.set_from("nothing matches this");
         assert!(app.filtered_entries().is_empty());
         assert_eq!(app.project_summary(), before);
     }
@@ -2972,7 +2971,7 @@ mod tests {
             "2h 0m",     // the formatted duration
             &today.format("%Y-%m-%d").to_string(),
         ] {
-            app.search_term = needle.to_string();
+            app.search_term.set_from(needle);
             let view = in_view(&app);
             assert!(
                 view.contains(&"wrote the migration".to_string()),
@@ -2981,9 +2980,9 @@ mod tests {
         }
 
         // The date matches both entries; every other needle above is unique to one.
-        app.search_term = "loremind".to_string();
+        app.search_term.set_from("loremind");
         assert_eq!(in_view(&app), vec!["wrote the migration"]);
-        app.search_term = "no such thing".to_string();
+        app.search_term.set_from("no such thing");
         assert!(in_view(&app).is_empty());
     }
 
@@ -2999,9 +2998,9 @@ mod tests {
         let mut app = App::new().unwrap();
         select(&mut app, "has a project");
         app.start_editing();
-        assert_eq!(app.input_project, "acme");
+        assert_eq!(app.input_project.value(), "acme");
 
-        app.input_project = "beta".to_string();
+        app.input_project.set_from("beta");
         app.submit_edit().unwrap();
         assert_eq!(on_disk().entries[0].project, Some("beta".to_string()));
 
