@@ -2002,6 +2002,75 @@ mod tests {
             .collect()
     }
 
+    /// One rendered frame plus the cursor it asked for.
+    fn frame_cursor(app: &mut App, width: u16, height: u16) -> (u16, u16) {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| render::ui(f, app)).unwrap();
+        let pos = terminal.get_cursor_position().unwrap();
+        (pos.x, pos.y)
+    }
+
+    #[test]
+    fn the_entry_form_stacks_its_fields_three_rows_apart() {
+        let _guard = env_guard();
+        sandbox("entry-form-layout");
+        seed(vec![], 1);
+
+        let mut app = App::new().unwrap();
+        app.start_adding();
+        let screen = frame_lines(&mut app, 100, 60);
+        let row_of = |needle: &str| {
+            screen
+                .iter()
+                .position(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} is missing:\n{}", screen.join("\n")))
+        };
+
+        let rows: Vec<usize> = [
+            " Description ",
+            " Project (optional",
+            " Tags (space-separated",
+            " Duration (optional",
+            " Start Time (",
+            " End Time (optional",
+            " Add Log Entry ", // the help row's own block title
+        ]
+        .iter()
+        .map(|label| row_of(label))
+        .collect();
+
+        for pair in rows.windows(2) {
+            assert_eq!(pair[1] - pair[0], 3, "form rows drifted: {rows:?}");
+        }
+        assert_eq!(
+            row_of(": switch field") - rows[rows.len() - 1],
+            1,
+            "the help text left its block"
+        );
+    }
+
+    #[test]
+    fn the_form_cursor_lands_on_the_active_field() {
+        let _guard = env_guard();
+        sandbox("entry-form-cursor");
+        seed(vec![], 1);
+
+        let mut app = App::new().unwrap();
+        app.start_adding();
+        // A multi-byte value: the cursor is placed by display width, not bytes.
+        app.input_description.set_from("héllo");
+        app.input_project.set_from("acme");
+
+        let first = frame_cursor(&mut app, 100, 60);
+        app.next_input_field();
+        let second = frame_cursor(&mut app, 100, 60);
+
+        assert_eq!(second.1 - first.1, 3, "cursor did not follow the Tab order");
+        // "héllo" is five columns wide, "acme" four — both share the chunk's x.
+        assert_eq!(first.0 - second.0, 1, "cursor column ignored display width");
+    }
+
     #[test]
     fn the_agents_panel_renders_the_unaccounted_section_when_flagged() {
         let _guard = env_guard();
