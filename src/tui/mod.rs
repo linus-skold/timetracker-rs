@@ -103,7 +103,7 @@ impl App {
     /// `for_interactive_run` instead.
     #[cfg_attr(not(test), allow(dead_code))]
     fn new() -> Result<Self> {
-        Self::from_config(&crate::config::load())
+        Self::from_config(crate::config::load())
     }
 
     /// The blessed constructor for a real run: any future production entry
@@ -111,7 +111,7 @@ impl App {
     /// something each call site has to remember to bolt on.
     fn for_interactive_run(update_notice: Option<String>) -> Result<Self> {
         let config = crate::config::load();
-        let mut app = Self::from_config(&config)?;
+        let mut app = Self::from_config(config)?;
         if crate::config::should_onboard(&config.general) {
             app.input_mode = InputMode::Onboarding;
         }

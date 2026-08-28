@@ -9,9 +9,10 @@
 /// shared/base config kept elsewhere.
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 
 #[derive(Debug, Default, Deserialize)]
 struct RawConfig {
@@ -115,18 +116,43 @@ pub struct Config {
     pub general: GeneralConfig,
 }
 
-/// Loads the user's config file, if any. Missing file -> defaults. A
+/// Resolved configs, keyed on the config path they were read from (`None` =
+/// no config path available). Keyed rather than a single `OnceLock` because
+/// tests repoint `TT_CONFIG_FILE` per sandbox — see `storage::env_sandbox` —
+/// and a process-global single slot would serve the first sandbox's config to
+/// every later one. Entries are leaked so callers get `&'static Config`; the
+/// key set is one path per process in a real run.
+static CACHE: OnceLock<Mutex<HashMap<Option<PathBuf>, &'static Config>>> = OnceLock::new();
+
+/// Loads the user's config file, if any, and caches the resolved result so
+/// repeat callers (the audit entry points, the TUI, `list`) do not re-read and
+/// re-parse the whole `include` chain. Missing file -> defaults. A
 /// present-but-invalid file prints a warning to stderr and falls back to
 /// defaults, rather than failing the whole command.
-pub fn load() -> Config {
-    let Some(path) = config_path() else {
+pub fn load() -> &'static Config {
+    let key = config_path();
+    let mut cache = CACHE
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(config) = cache.get(&key) {
+        return config;
+    }
+    let config: &'static Config = Box::leak(Box::new(read(key.as_deref())));
+    cache.insert(key, config);
+    config
+}
+
+/// The uncached read behind [`load`].
+fn read(path: Option<&Path>) -> Config {
+    let Some(path) = path else {
         return Config::default();
     };
     if !path.exists() {
         return Config::default();
     }
 
-    match load_raw(&path, &mut HashSet::new()) {
+    match load_raw(path, &mut HashSet::new()) {
         Ok(raw) => Config {
             theme: raw.theme.unwrap_or_default(),
             icons: raw.icons.unwrap_or_default(),
@@ -521,6 +547,33 @@ mod tests {
         let saved = load();
         assert_eq!(saved.general.onboarding, Some(false));
         drop(dir);
+    }
+
+    /// The cache is keyed on the resolved config path, not a single global
+    /// slot: repointing `TT_CONFIG_FILE` (as every sandboxed test does) must
+    /// still read the new file rather than serve the first one loaded.
+    #[test]
+    fn the_cache_is_keyed_on_the_config_path() {
+        let _guard = crate::storage::env_guard();
+
+        let first = crate::storage::env_sandbox("config-cache-key-first");
+        let path = config_path().expect("a config path");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "[list]\ndefault_limit = 7\n").unwrap();
+        assert_eq!(load().list.default_limit, Some(7));
+
+        let second = crate::storage::env_sandbox("config-cache-key-second");
+        let path = config_path().expect("a config path");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "[list]\ndefault_limit = 9\n").unwrap();
+        assert_eq!(load().list.default_limit, Some(9));
+
+        // Back to the first path: served from the cache, same value.
+        unsafe { std::env::set_var("TT_CONFIG_FILE", first.join("config.toml")) };
+        assert_eq!(load().list.default_limit, Some(7));
+
+        drop(first);
+        drop(second);
     }
 
     #[test]
