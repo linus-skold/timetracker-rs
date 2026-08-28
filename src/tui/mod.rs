@@ -4,6 +4,7 @@ use crate::marks::Mark;
 use crate::storage::{PathStamp, load_data};
 use crate::tracker::TimeData;
 use anyhow::Result;
+use cache::{FilterKey, ScopeKey};
 use chrono::{Local, NaiveDate};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
@@ -11,9 +12,11 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend, widgets::TableState};
+use std::cell::RefCell;
 use std::io::{self, Stdout};
 use text_input::TextInput;
 
+mod cache;
 mod entry_form;
 mod keys;
 mod marks_surface;
@@ -33,7 +36,18 @@ pub use types::{
 };
 
 pub(crate) struct App {
+    /// The store snapshot. **Never assign this directly** — go through
+    /// [`App::set_data`], which bumps `data_revision`.
     pub(crate) data: TimeData,
+    /// Bumped on every replacement of `data`, so the cache keys can stand in for
+    /// its contents without comparing them.
+    pub(crate) data_revision: u64,
+    /// `filtered_entries` as indices into `data.entries` — indices, not
+    /// references, so the cache does not borrow `data` — with the key they hold
+    /// for. `RefCell` because nearly every reader is a `&self` method.
+    filtered_cache: RefCell<Option<(FilterKey, Vec<usize>)>>,
+    /// `pane_values` for `[Projects, Tags]`, with the key they hold for.
+    pane_cache: RefCell<Option<(ScopeKey, panes::PaneValues)>>,
     pub(crate) table_state: TableState,
     pub(crate) should_quit: bool,
     pub(crate) view_mode: ViewMode,
@@ -126,6 +140,9 @@ impl App {
         let layout = &config.layout;
         let mut app = Self {
             data: load_data()?,
+            data_revision: 0,
+            filtered_cache: RefCell::new(None),
+            pane_cache: RefCell::new(None),
             store_stamp,
             marks: Vec::new(),
             marks_stamp: None,
@@ -186,10 +203,18 @@ impl App {
             let result = edit(data);
             Ok((result, data.clone()))
         })?;
-        self.data = fresh;
+        self.set_data(fresh);
         // Our own write moved the file on; stamp it so the next tick skips it.
         self.store_stamp = crate::storage::store_stamp();
         Ok(result)
+    }
+
+    /// The one place `data` is replaced, by `mutate_store` and by `reload`.
+    /// Bumping `data_revision` here is what makes the derived-view caches notice
+    /// the new store, so a bare `self.data = …` elsewhere would go unseen.
+    pub(crate) fn set_data(&mut self, data: TimeData) {
+        self.data = data;
+        self.data_revision = self.data_revision.wrapping_add(1);
     }
 }
 

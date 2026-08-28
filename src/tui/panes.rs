@@ -4,11 +4,26 @@
 use std::collections::HashMap;
 
 use super::App;
+use super::cache::ScopeKey;
 use super::types::{Focus, Pane};
 use crate::tracker::TimeEntry;
 
 /// Most value rows a pane shows before it starts scrolling.
 const MAX_VISIBLE_VALUES: usize = 6;
+
+/// One pane's rows: distinct value and its match count.
+pub(crate) type PaneRows = Vec<(String, usize)>;
+
+/// Both panes' rows, in `[Projects, Tags]` order — the cached unit.
+pub(crate) type PaneValues = [PaneRows; 2];
+
+/// A pane's slot in the cached `[Projects, Tags]` pair.
+fn pane_index(pane: Pane) -> usize {
+    match pane {
+        Pane::Projects => 0,
+        Pane::Tags => 1,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Polarity {
@@ -17,7 +32,8 @@ pub(crate) enum Polarity {
 }
 
 /// A pane's filter. One vec, so a value is include or exclude, never both.
-#[derive(Debug, Default)]
+/// `Clone`/`PartialEq` so [`FilterKey`](super::cache::FilterKey) can hold it.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct PaneFilter(Vec<(String, Polarity)>);
 
 impl PaneFilter {
@@ -137,7 +153,39 @@ impl App {
 
     /// Distinct values with match counts, most used first, ties broken by name. No
     /// project contributes no row; a tag repeated within one entry counts once.
-    pub(crate) fn pane_values(&self, pane: Pane) -> Vec<(String, usize)> {
+    /// Cached against [`ScopeKey`] — pane values read no filter, so only the
+    /// store and the view scope can move them.
+    pub(crate) fn pane_values(&self, pane: Pane) -> PaneRows {
+        self.with_pane_values(|values| values[pane_index(pane)].clone())
+    }
+
+    /// A pane's row count, without cloning its values.
+    pub(crate) fn pane_value_count(&self, pane: Pane) -> usize {
+        self.with_pane_values(|values| values[pane_index(pane)].len())
+    }
+
+    /// Run `f` over both panes' cached values, recomputing them first if the
+    /// scope has moved. Both panes are built together: a frame reads both, and
+    /// one cache entry means one staleness question instead of two.
+    fn with_pane_values<T>(&self, f: impl FnOnce(&PaneValues) -> T) -> T {
+        let key = ScopeKey::of(self);
+        let stale = match &*self.pane_cache.borrow() {
+            Some((cached, _)) => *cached != key,
+            None => true,
+        };
+        if stale {
+            let values = [
+                self.compute_pane_values(Pane::Projects),
+                self.compute_pane_values(Pane::Tags),
+            ];
+            *self.pane_cache.borrow_mut() = Some((key, values));
+        }
+        let cache = self.pane_cache.borrow();
+        let (_, values) = cache.as_ref().expect("filled just above");
+        f(values)
+    }
+
+    fn compute_pane_values(&self, pane: Pane) -> PaneRows {
         let entries = self.scope_entries();
         let mut counts: HashMap<&str, usize> = HashMap::new();
         for entry in &entries {
@@ -162,7 +210,7 @@ impl App {
             }
         }
 
-        let mut values: Vec<(String, usize)> = counts
+        let mut values: PaneRows = counts
             .into_iter()
             .map(|(value, count)| (value.to_string(), count))
             .collect();
@@ -178,7 +226,7 @@ impl App {
         }
         let longest = panes
             .iter()
-            .map(|pane| self.pane_values(*pane).len())
+            .map(|pane| self.pane_value_count(*pane))
             .max()
             .unwrap_or(0);
         2 + longest.clamp(1, MAX_VISIBLE_VALUES) as u16
@@ -189,7 +237,7 @@ impl App {
             Pane::Projects => self.project_cursor,
             Pane::Tags => self.tag_cursor,
         };
-        let len = self.pane_values(pane).len();
+        let len = self.pane_value_count(pane);
         cursor.min(len.saturating_sub(1))
     }
 
@@ -197,7 +245,7 @@ impl App {
     pub(crate) fn pane_scroll_indicator(&self, pane: Pane, visible_rows: usize) -> Option<String> {
         surface_count(
             Some(self.pane_cursor(pane)),
-            self.pane_values(pane).len(),
+            self.pane_value_count(pane),
             visible_rows,
         )
     }
@@ -288,7 +336,7 @@ impl App {
         let Some(pane) = self.focused_pane() else {
             return false;
         };
-        let len = self.pane_values(pane).len();
+        let len = self.pane_value_count(pane);
         if len == 0 {
             return true;
         }

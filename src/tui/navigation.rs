@@ -10,7 +10,7 @@ impl App {
     /// stamping after records a fingerprint newer than the data and loses the update.
     pub(crate) fn reload(&mut self) -> Result<()> {
         self.store_stamp = crate::storage::store_stamp();
-        self.data = crate::storage::load_data()?;
+        self.set_data(crate::storage::load_data()?);
         Ok(())
     }
 
@@ -107,7 +107,7 @@ impl App {
     }
 
     pub(crate) fn next(&mut self) {
-        let len = self.filtered_entries().len();
+        let len = self.filtered_len();
         if len == 0 {
             return;
         }
@@ -119,7 +119,7 @@ impl App {
     }
 
     pub(crate) fn previous(&mut self) {
-        let len = self.filtered_entries().len();
+        let len = self.filtered_len();
         if len == 0 {
             return;
         }
@@ -154,7 +154,7 @@ impl App {
         // An id that is already gone matches nothing — not an error.
         self.mutate_store(|data| data.entries.retain(|e| e.id != entry_id))?;
 
-        let new_len = self.filtered_entries().len();
+        let new_len = self.filtered_len();
         let past_the_end = self
             .table_state
             .selected()

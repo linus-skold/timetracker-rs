@@ -1,9 +1,47 @@
 use super::App;
+use super::cache::FilterKey;
 use super::types::{InputMode, SortOrder};
 use chrono::Duration;
+use std::collections::HashMap;
 
 impl App {
+    /// The rows the entries table shows, in sort order. Cached against
+    /// [`FilterKey`], so the many calls a single frame makes cost one walk.
     pub(crate) fn filtered_entries(&self) -> Vec<&crate::tracker::TimeEntry> {
+        self.with_filtered_indices(|indices| {
+            indices
+                .iter()
+                .filter_map(|i| self.data.entries.get(*i))
+                .collect()
+        })
+    }
+
+    /// How many rows [`filtered_entries`](Self::filtered_entries) would return,
+    /// without materialising them.
+    pub(crate) fn filtered_len(&self) -> usize {
+        self.with_filtered_indices(<[usize]>::len)
+    }
+
+    /// Run `f` over the cached row indices, recomputing them first if any input
+    /// the [`FilterKey`] covers has moved since they were built.
+    fn with_filtered_indices<T>(&self, f: impl FnOnce(&[usize]) -> T) -> T {
+        let key = FilterKey::of(self);
+        let stale = match &*self.filtered_cache.borrow() {
+            Some((cached, _)) => *cached != key,
+            None => true,
+        };
+        if stale {
+            let indices = self.compute_filtered_indices();
+            *self.filtered_cache.borrow_mut() = Some((key, indices));
+        }
+        let cache = self.filtered_cache.borrow();
+        let (_, indices) = cache.as_ref().expect("filled just above");
+        f(indices)
+    }
+
+    /// The uncached walk — scope, sort, then the filters — resolved to indices
+    /// into `data.entries` so the cache holds no borrow of `data`.
+    fn compute_filtered_indices(&self) -> Vec<usize> {
         let mut entries = self.scope_entries();
 
         match self.sort_order {
@@ -18,7 +56,7 @@ impl App {
             .filter(|e| self.tag_filter.allows(|v| e.has_tag(v)))
             .collect();
 
-        if self.search_term.is_empty() {
+        let entries = if self.search_term.is_empty() {
             entries
         } else {
             let search_lower = self.search_term.value().to_lowercase();
@@ -26,7 +64,19 @@ impl App {
                 .into_iter()
                 .filter(|e| e.matches_search(&search_lower))
                 .collect()
-        }
+        };
+
+        let position: HashMap<u64, usize> = self
+            .data
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| (e.id, i))
+            .collect();
+        entries
+            .iter()
+            .filter_map(|e| position.get(&e.id).copied())
+            .collect()
     }
 
     pub(crate) fn filtered_total(&self) -> Duration {
