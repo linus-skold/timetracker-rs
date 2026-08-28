@@ -2,7 +2,7 @@
 //! `cli.rs` defines what the arguments are; this module is what they do.
 
 use anyhow::Result;
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{DateTime, Duration, Local, NaiveDate};
 
 use crate::completions;
 use crate::config;
@@ -174,8 +174,9 @@ pub fn stop() -> Result<()> {
 /// One finished entry to record, as [`log`] takes it.
 pub struct LogRequest {
     pub description: String,
-    /// Duration in `tt log -t` form, e.g. "1h30m".
-    pub time: String,
+    /// How long the entry ran; already parsed, so `log` cannot be handed a
+    /// duration nobody validated.
+    pub time: Duration,
     /// Tags to add on top of the ones parsed out of the description.
     pub extra_tags: Vec<String>,
     pub project: Option<String>,
@@ -198,9 +199,8 @@ pub fn log(request: LogRequest) -> Result<()> {
         trim,
         ended_at,
     } = request;
-    let dur = duration::parse(&time);
     let end_time = ended_at.unwrap_or_else(Local::now);
-    let start_time = end_time - dur;
+    let start_time = end_time - time;
 
     let (desc, mut tags) = parse_tags(&description);
     for tag in extra_tags {
@@ -235,7 +235,7 @@ pub fn log(request: LogRequest) -> Result<()> {
             }
             // An empty vec is `trim_spans` declining, which leaves the entry whole.
         }
-        Ok(dur)
+        Ok(time)
     })?;
 
     println!(
@@ -426,7 +426,7 @@ mod tests {
         let entry = &data.entries[0];
         assert_eq!(
             entry.duration(),
-            duration::parse("90m"),
+            chrono::Duration::minutes(90),
             "--idle changed the logged duration"
         );
         assert_eq!(entry.idle.len(), 1);
@@ -494,7 +494,7 @@ mod tests {
             .fold(chrono::Duration::zero(), |acc, e| acc + e.duration());
         assert_eq!(
             logged,
-            duration::parse("2h") - chrono::Duration::seconds(idle_total),
+            chrono::Duration::hours(2) - chrono::Duration::seconds(idle_total),
             "the pieces do not sum to the span minus the idle stretches"
         );
         let ids: Vec<u64> = data.entries.iter().map(|e| e.id).collect();
@@ -532,7 +532,7 @@ mod tests {
 
         let data = storage::load_data().unwrap();
         assert_eq!(data.entries.len(), 1, "recording is not trimming");
-        assert_eq!(data.entries[0].duration(), duration::parse("60m"));
+        assert_eq!(data.entries[0].duration(), chrono::Duration::minutes(60));
         assert_eq!(data.entries[0].idle.len(), 1, "the interval is still there");
     }
 }

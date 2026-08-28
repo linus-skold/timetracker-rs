@@ -1,7 +1,7 @@
 //! The clap surface: what `tt`'s arguments are. The command implementations
 //! they dispatch to live in `src/commands.rs`.
 
-use chrono::{Local, NaiveDate, TimeZone};
+use chrono::{Duration, Local, NaiveDate, TimeZone};
 use clap::builder::PossibleValuesParser;
 use clap::{Parser, Subcommand};
 use clap_complete::ArgValueCandidates;
@@ -34,9 +34,9 @@ pub enum Commands {
         /// Description of the task
         #[arg(short = 'd', long)]
         description: String,
-        /// Duration in format like "1h30m", "45m", "2h"
-        #[arg(short = 't', long)]
-        time: String,
+        /// Duration in format like "1h30m", "45m", "2h", or bare minutes "90"
+        #[arg(short = 't', long, value_parser = parse_duration)]
+        time: Duration,
         /// Comma-separated tags (e.g. tagA,tagB,tagC)
         #[arg(long, value_delimiter = ',')]
         tags: Vec<String>,
@@ -281,6 +281,17 @@ impl AgentCommands {
     }
 }
 
+/// Parse one `-t/--time` value. A malformed duration is a usage error, never a
+/// zero-length or partially honoured entry.
+fn parse_duration(value: &str) -> Result<Duration, String> {
+    crate::duration::parse(value).ok_or_else(|| {
+        format!(
+            "expected a duration like `1h30m`, `45m`, `2h` or bare minutes `90`, got `{}`",
+            value
+        )
+    })
+}
+
 /// Parse one `--idle` value: `<start>-<end>` in epoch seconds. A malformed value
 /// is an error, never a silently dropped interval.
 fn parse_idle(value: &str) -> Result<IdleInterval, String> {
@@ -369,6 +380,32 @@ mod tests {
                 &format!("--idle={}", bad),
             ]);
             assert!(parsed.is_err(), "`{bad}` parsed instead of failing");
+        }
+    }
+
+    /// #41: `-t` refuses what it cannot parse instead of logging zero.
+    #[test]
+    fn a_malformed_time_value_is_a_parse_error_not_a_zero_entry() {
+        for bad in ["garbage", "1x30", "-45m", "1h30", "1.5h", "90 minutes", ""] {
+            let parsed = Cli::try_parse_from(["tt", "log", "-d", "x", "-t", bad]);
+            assert!(parsed.is_err(), "`{bad}` parsed instead of failing");
+        }
+    }
+
+    #[test]
+    fn the_documented_time_forms_all_parse() {
+        for (raw, expected) in [
+            ("1h30m", Duration::minutes(90)),
+            ("45m", Duration::minutes(45)),
+            ("2h", Duration::hours(2)),
+            ("90", Duration::minutes(90)),
+        ] {
+            let cli = Cli::try_parse_from(["tt", "log", "-d", "x", "-t", raw])
+                .unwrap_or_else(|e| panic!("`{raw}` failed to parse: {e}"));
+            match cli.command {
+                Commands::Log { time, .. } => assert_eq!(time, expected, "`{raw}`"),
+                _ => panic!("not a log command"),
+            }
         }
     }
 

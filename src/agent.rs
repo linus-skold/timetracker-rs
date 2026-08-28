@@ -10,7 +10,7 @@
 //! The messages are a contract: their caller is an agent following prose.
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Duration, Local};
 
 use crate::tracker::IdleInterval;
 
@@ -301,7 +301,7 @@ fn write_auto_log(item: &audit::Unaccounted) -> Result<()> {
     let minutes = item.end.signed_duration_since(item.start).num_minutes();
     commands::log(commands::LogRequest {
         description: "unattended activity #auto".to_string(),
-        time: format!("{}m", round_five(minutes)),
+        time: Duration::minutes(round_five(minutes)),
         extra_tags: Vec::new(),
         project: Some(item.project.clone()),
         idle: item.idle.clone(),
@@ -377,7 +377,7 @@ fn log_entry(
 ) -> Result<()> {
     commands::log(commands::LogRequest {
         description: description(project, issue, phase, summary),
-        time: format!("{}m", round_five(minutes)),
+        time: Duration::minutes(round_five(minutes)),
         extra_tags: Vec::new(),
         project: Some(project.to_string()),
         idle: span.idle,
