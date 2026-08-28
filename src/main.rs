@@ -4,6 +4,7 @@ mod activity;
 mod agent;
 mod audit;
 mod cli;
+mod commands;
 mod completions;
 mod config;
 mod duration;
@@ -53,13 +54,13 @@ fn main() -> Result<()> {
             project,
             json,
         } => {
-            return cli::report(*all, *week, *since, *until, project.clone(), *json);
+            return commands::report(*all, *week, *since, *until, project.clone(), *json);
         }
         Commands::Update { check, yes } => {
-            return cli::update(*check, *yes);
+            return commands::update(*check, *yes);
         }
         Commands::Completions { shell } => {
-            return cli::completions(shell.as_deref());
+            return commands::completions(shell.as_deref());
         }
         _ => {}
     }
@@ -85,8 +86,8 @@ fn main() -> Result<()> {
         Commands::Start {
             description,
             project,
-        } => cli::start(description, project),
-        Commands::Stop => cli::stop(),
+        } => commands::start(description, project),
+        Commands::Stop => commands::stop(),
         Commands::Log {
             description,
             time,
@@ -94,8 +95,8 @@ fn main() -> Result<()> {
             project,
             idle,
             trim,
-        } => cli::log(description, time, tags, project, idle, trim, None),
-        Commands::Today => cli::today(),
+        } => commands::log(description, time, tags, project, idle, trim, None),
+        Commands::Today => commands::today(),
         Commands::Report {
             all,
             week,
@@ -103,15 +104,15 @@ fn main() -> Result<()> {
             until,
             project,
             json,
-        } => cli::report(all, week, since, until, project, json),
-        Commands::List { limit } => cli::list(limit),
+        } => commands::report(all, week, since, until, project, json),
+        Commands::List { limit } => commands::list(limit),
         Commands::Tui => tui::run_tui(update_notice),
-        Commands::Status => cli::status(),
-        Commands::Active => cli::active(),
+        Commands::Status => commands::status(),
+        Commands::Active => commands::active(),
         Commands::Agent { command } => agent::run(&command),
         // Dispatched ahead of the preamble above; unreachable in practice,
         // kept for exhaustiveness (same shape as `Report` just above it).
-        Commands::Update { check, yes } => cli::update(check, yes),
-        Commands::Completions { shell } => cli::completions(shell.as_deref()),
+        Commands::Update { check, yes } => commands::update(check, yes),
+        Commands::Completions { shell } => commands::completions(shell.as_deref()),
     }
 }

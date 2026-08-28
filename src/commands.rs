@@ -1,0 +1,515 @@
+//! The command implementations behind the clap surface in `src/cli.rs`.
+//! `cli.rs` defines what the arguments are; this module is what they do.
+
+use anyhow::Result;
+use chrono::{DateTime, Local, NaiveDate};
+
+use crate::completions;
+use crate::config;
+use crate::duration;
+use crate::icons;
+use crate::report;
+use crate::storage::{load_data, with_data};
+use crate::tracker::{IdleInterval, format_tags, parse_tags};
+
+/// Print the completion hook for `eval` at shell startup. The hook embeds this
+/// binary's absolute path, so it is regenerated on every startup, never saved;
+/// nu is the exception (see `completions::Nu`).
+pub fn completions(shell: Option<&str>) -> Result<()> {
+    let from_env = std::env::var_os("SHELL").and_then(|s| {
+        std::path::Path::new(&s)
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+    });
+    let completer = shell
+        .map(str::to_string)
+        .or(from_env)
+        .or_else(|| cfg!(windows).then(|| "powershell".to_string()))
+        .and_then(|n| completions::SHELLS.completer(&n))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "could not detect the shell from $SHELL; pass one of: {}",
+                completions::SHELLS.names().collect::<Vec<_>>().join(", ")
+            )
+        })?;
+    let exe = std::env::current_exe()?;
+    completer.write_registration(
+        "COMPLETE",
+        "tt",
+        "tt",
+        &exe.to_string_lossy(),
+        &mut std::io::stdout(),
+    )?;
+    if std::io::IsTerminal::is_terminal(&std::io::stdout()) {
+        let name = completer.name();
+        // install.sh and install.ps1 print copies of this table.
+        let line = match name {
+            "fish" => "tt completions fish | source   # ~/.config/fish/config.fish".to_string(),
+            "powershell" => {
+                "tt completions powershell | Out-String | Invoke-Expression   # $PROFILE".to_string()
+            }
+            "elvish" => "eval (tt completions elvish | slurp)   # ~/.config/elvish/rc.elv".to_string(),
+            "nu" => "tt completions nu | save -f ($nu.user-autoload-dirs.0 | path join tt-completer.nu)   # run once".to_string(),
+            _ => format!("eval \"$(tt completions {name})\"   # ~/.{name}rc"),
+        };
+        eprintln!(
+            "\nTo enable completion, run this once or add it to your shell startup file:\n  {line}"
+        );
+    }
+    Ok(())
+}
+
+/// Bracketed, space-prefixed tag display for println! output, e.g. " [#a #b]",
+/// or "" when there are no tags.
+fn tags_display(tags: &[String]) -> String {
+    if tags.is_empty() {
+        String::new()
+    } else {
+        format!(" [{}]", format_tags(tags))
+    }
+}
+
+/// Render a project for a single-line listing: ` (demo)`, or nothing when unset.
+/// The project is a field, never a tag, so it prints separately from the tags.
+fn project_display(project: Option<&String>) -> String {
+    match project {
+        Some(p) => format!(" ({})", p),
+        None => String::new(),
+    }
+}
+
+pub fn start(description: Vec<String>, project: Option<String>) -> Result<()> {
+    let raw_desc = description.join(" ");
+    let (desc, tags) = parse_tags(&raw_desc);
+    let start_time = Local::now();
+
+    // One lock for the check and the insert, so two starts cannot both see nothing.
+    let already_tracking = with_data(|data| {
+        if let Some(active) = data.active_entry() {
+            return Ok(Some((active.description.clone(), active.start_time)));
+        }
+        data.add_entry(
+            desc.clone(),
+            project.clone(),
+            tags.clone(),
+            start_time,
+            None,
+        );
+        Ok(None)
+    })?;
+
+    if let Some((active_desc, active_start)) = already_tracking {
+        println!(
+            "{}  Already tracking: \"{}\" (started at {})",
+            icons::warning(),
+            active_desc,
+            active_start.format("%H:%M")
+        );
+        println!("Stop it first with: tt stop");
+        return Ok(());
+    }
+
+    println!(
+        "{}  Started: \"{}\"{}{} at {}",
+        icons::active(),
+        desc,
+        project_display(project.as_ref()),
+        tags_display(&tags),
+        start_time.format("%H:%M:%S")
+    );
+    Ok(())
+}
+
+pub fn stop() -> Result<()> {
+    let stopped = with_data(|data| {
+        let info = data
+            .active_entry()
+            .map(|e| (e.description.clone(), e.format_duration()));
+
+        if data.stop_active() {
+            Ok(info)
+        } else {
+            Ok(None)
+        }
+    })?;
+
+    if let Some((desc, dur)) = stopped {
+        println!(
+            "{}  Stopped: \"{}\" - Duration: {}",
+            icons::stopped(),
+            desc,
+            dur
+        );
+    } else {
+        println!("No active task to stop.");
+    }
+    Ok(())
+}
+
+/// Record a finished entry, back-dated from its end. `ended_at` pins the
+/// timeline and must be the mark's last heartbeat whenever `idle` intervals are
+/// passed, or the recorded silence lands outside the entry.
+pub fn log(
+    description: String,
+    time_str: String,
+    extra_tags: Vec<String>,
+    project: Option<String>,
+    idle: Vec<IdleInterval>,
+    trim: bool,
+    ended_at: Option<DateTime<Local>>,
+) -> Result<()> {
+    let dur = duration::parse(&time_str);
+    let end_time = ended_at.unwrap_or_else(Local::now);
+    let start_time = end_time - dur;
+
+    let (desc, mut tags) = parse_tags(&description);
+    for tag in extra_tags {
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    // Taken out of the closure, so the figure printed is the one written.
+    let stored = with_data(|data| {
+        let entry_id = data
+            .add_entry(
+                desc.clone(),
+                project.clone(),
+                tags.clone(),
+                start_time,
+                Some(end_time),
+            )
+            .id;
+        if let Some(entry) = data.entries.iter_mut().find(|e| e.id == entry_id) {
+            entry.idle = idle;
+        }
+        // Do not lift this out of the closure: the insert and the split are one
+        // store transaction.
+        if trim {
+            let pieces = data.split_at_idle(entry_id);
+            if !pieces.is_empty() {
+                return Ok(pieces
+                    .iter()
+                    .filter_map(|id| data.get_entry(*id))
+                    .map(|piece| piece.duration())
+                    .sum());
+            }
+            // An empty vec is `trim_spans` declining, which leaves the entry whole.
+        }
+        Ok(dur)
+    })?;
+
+    println!(
+        "{} Logged: \"{}\"{}{} - Duration: {}",
+        icons::logged(),
+        desc,
+        project_display(project.as_ref()),
+        tags_display(&tags),
+        duration::format(stored)
+    );
+    Ok(())
+}
+
+pub fn today() -> Result<()> {
+    let data = load_data()?;
+    let today_entries = data.today_entries();
+
+    if today_entries.is_empty() {
+        println!("No entries for today.");
+        return Ok(());
+    }
+
+    println!("{} Today's entries:\n", icons::calendar());
+    for entry in &today_entries {
+        let status = if entry.is_active() {
+            entry.status_icon()
+        } else {
+            "  "
+        };
+        let tags_display = if entry.tags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", entry.format_tags())
+        };
+        println!(
+            "{}{} - {}{}{} ({})",
+            status,
+            entry.start_time.format("%H:%M"),
+            entry.description,
+            project_display(entry.project.as_ref()),
+            tags_display,
+            entry.format_duration()
+        );
+    }
+    println!("\nTotal: {}", duration::format(data.today_total()));
+    Ok(())
+}
+
+pub fn list(limit: Option<usize>) -> Result<()> {
+    let limit = limit.unwrap_or_else(|| config::load().list.default_limit.unwrap_or(20));
+    let data = load_data()?;
+
+    if data.entries.is_empty() {
+        println!("No entries yet.");
+        return Ok(());
+    }
+
+    println!("{} All entries:\n", icons::list());
+    for entry in data.entries.iter().rev().take(limit) {
+        let status = if entry.is_active() {
+            entry.status_icon()
+        } else {
+            "  "
+        };
+        let tags_display = if entry.tags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", entry.format_tags())
+        };
+        println!(
+            "{}{} {} - {}{}{} ({})",
+            status,
+            entry.start_time.format("%Y-%m-%d"),
+            entry.start_time.format("%H:%M"),
+            entry.description,
+            project_display(entry.project.as_ref()),
+            tags_display,
+            entry.format_duration()
+        );
+    }
+    Ok(())
+}
+
+pub fn status() -> Result<()> {
+    let data = load_data()?;
+
+    if let Some(active) = data.active_entry() {
+        println!(
+            "{}  Currently tracking: \"{}\"",
+            icons::active(),
+            active.description
+        );
+        if let Some(project) = &active.project {
+            println!("   Project: {}", project);
+        }
+        if !active.tags.is_empty() {
+            println!("   Tags: {}", active.format_tags());
+        }
+        println!("   Started at: {}", active.start_time.format("%H:%M:%S"));
+        println!("   Duration: {}", active.format_duration());
+    } else {
+        println!("No active task. Start one with: tt start <description>");
+    }
+    Ok(())
+}
+
+pub fn active() -> Result<()> {
+    let data = load_data()?;
+
+    if data.active_entry().is_some() {
+        println!("true");
+    } else {
+        println!("false");
+    }
+
+    Ok(())
+}
+
+/// `tt update` — see `src/update.rs` for the actual GitHub Releases lookup,
+/// download and self-replacement. Dispatched ahead of the preamble in
+/// `main.rs`, same as `report`: it never touches the data store.
+pub fn update(check: bool, yes: bool) -> Result<()> {
+    crate::update::perform_update(check, yes)
+}
+
+/// `tt report` — the rollup surface; see `src/report.rs` for the maths. Dispatched
+/// ahead of the preamble in `main.rs`, so it migrates its own in-memory copy.
+#[allow(clippy::too_many_arguments)]
+pub fn report(
+    all: bool,
+    week: bool,
+    since: Option<NaiveDate>,
+    until: Option<NaiveDate>,
+    project: Option<String>,
+    json: bool,
+) -> Result<()> {
+    let mut data = load_data()?;
+    crate::tracker::migrate(&mut data);
+    let today = Local::now().date_naive();
+    let scope = report::resolve_scope(today, all, week, since, until, project.as_deref());
+    let selected = report::select(&data, &scope, project.as_deref());
+    let rolled = report::rollup(&selected);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report::to_json(&rolled, &scope.label))?
+        );
+    } else {
+        print!("{}", report::render(&rolled, &scope.label));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::{Cli, Commands};
+    use crate::storage;
+    use crate::storage::env_guard;
+    use crate::storage::env_sandbox as sandbox;
+    use clap::Parser;
+
+    fn parse_log(args: &[&str]) -> Commands {
+        let mut argv = vec!["tt", "log"];
+        argv.extend_from_slice(args);
+        Cli::try_parse_from(argv).expect("log arguments").command
+    }
+
+    fn run_log(command: Commands) {
+        match command {
+            Commands::Log {
+                description,
+                time,
+                tags,
+                project,
+                idle,
+                trim,
+            } => log(description, time, tags, project, idle, trim, None).unwrap(),
+            _ => panic!("parse_log produced something other than a Log command"),
+        }
+    }
+
+    #[test]
+    fn idle_intervals_are_recorded_without_changing_the_logged_duration() {
+        let _guard = env_guard();
+        sandbox("log-idle");
+        let start = Local::now().timestamp() - 3600;
+        let end = start + 900;
+
+        run_log(parse_log(&[
+            "-d",
+            "wrote the thing",
+            "-t",
+            "90m",
+            &format!("--idle={}-{}", start, end),
+        ]));
+
+        let data = storage::load_data().unwrap();
+        assert_eq!(
+            data.entries.len(),
+            1,
+            "--idle alone must not split anything"
+        );
+        let entry = &data.entries[0];
+        assert_eq!(
+            entry.duration(),
+            duration::parse("90m"),
+            "--idle changed the logged duration"
+        );
+        assert_eq!(entry.idle.len(), 1);
+        assert_eq!(entry.idle[0].start.timestamp(), start);
+        assert_eq!(entry.idle[0].end.timestamp(), end);
+    }
+
+    #[test]
+    fn two_idle_arguments_are_both_recorded_in_order() {
+        let _guard = env_guard();
+        sandbox("log-idle-twice");
+        let base = Local::now().timestamp() - 7200;
+
+        run_log(parse_log(&[
+            "-d",
+            "long session",
+            "-t",
+            "2h",
+            &format!("--idle={}-{}", base + 600, base + 900),
+            &format!("--idle={}-{}", base + 3000, base + 3600),
+        ]));
+
+        let data = storage::load_data().unwrap();
+        let stamps: Vec<(i64, i64)> = data.entries[0]
+            .idle
+            .iter()
+            .map(|gap| (gap.start.timestamp(), gap.end.timestamp()))
+            .collect();
+        assert_eq!(
+            stamps,
+            vec![(base + 600, base + 900), (base + 3000, base + 3600)]
+        );
+    }
+
+    #[test]
+    fn trim_splits_the_logged_entry_in_the_same_command() {
+        let _guard = env_guard();
+        let dir = sandbox("log-trim");
+        // Two holes inside a two-hour span, so a correct trim leaves three pieces.
+        let end = Local::now().timestamp();
+        let start = end - 7200;
+        let gaps = [(start + 600, start + 1500), (start + 4000, start + 5800)];
+
+        run_log(parse_log(&[
+            "-d",
+            "long session",
+            "-t",
+            "2h",
+            &format!("--idle={}-{}", gaps[0].0, gaps[0].1),
+            &format!("--idle={}-{}", gaps[1].0, gaps[1].1),
+            "--trim",
+        ]));
+
+        let data = storage::load_data().unwrap();
+        assert_eq!(
+            data.entries.len(),
+            gaps.len() + 1,
+            "one piece per span left"
+        );
+        let idle_total: i64 = gaps.iter().map(|(from, to)| to - from).sum();
+        // Summed as durations: per-piece truncation would lose the sub-second parts.
+        let logged = data
+            .entries
+            .iter()
+            .fold(chrono::Duration::zero(), |acc, e| acc + e.duration());
+        assert_eq!(
+            logged,
+            duration::parse("2h") - chrono::Duration::seconds(idle_total),
+            "the pieces do not sum to the span minus the idle stretches"
+        );
+        let ids: Vec<u64> = data.entries.iter().map(|e| e.id).collect();
+        assert_eq!(ids, vec![0, 1, 2]);
+        assert_eq!(data.next_id, 3, "no id was spent twice");
+        assert!(
+            data.entries.iter().all(|e| e.idle.is_empty()),
+            "a piece kept an interval it excludes"
+        );
+        let store = storage::get_data_path().unwrap();
+        assert!(
+            store.starts_with(&dir) && store.exists(),
+            "the sandbox store"
+        );
+        assert!(
+            !store.with_extension("json.tmp").exists(),
+            "a temp store file survived the command"
+        );
+    }
+
+    #[test]
+    fn idle_without_trim_leaves_a_single_entry() {
+        let _guard = env_guard();
+        sandbox("log-no-trim");
+        let end = Local::now().timestamp();
+        let start = end - 3600;
+
+        run_log(parse_log(&[
+            "-d",
+            "left alone",
+            "-t",
+            "60m",
+            &format!("--idle={}-{}", start + 600, start + 1200),
+        ]));
+
+        let data = storage::load_data().unwrap();
+        assert_eq!(data.entries.len(), 1, "recording is not trimming");
+        assert_eq!(data.entries[0].duration(), duration::parse("60m"));
+        assert_eq!(data.entries[0].idle.len(), 1, "the interval is still there");
+    }
+}

@@ -4,7 +4,7 @@
 //!
 //! **`begin`, `touch`, `cancel`, `list` and a plain `audit` must touch no
 //! store** — `main.rs` dispatches them ahead of its migrate preamble. `item`,
-//! `end` and `audit --auto-log` log an entry through [`crate::cli::log`] and
+//! `end` and `audit --auto-log` log an entry through [`crate::commands::log`] and
 //! dispatch after it.
 //!
 //! The messages are a contract: their caller is an agent following prose.
@@ -16,7 +16,8 @@ use crate::tracker::IdleInterval;
 
 use crate::activity;
 use crate::audit;
-use crate::cli::{self, ActivityCommands, AgentCommands};
+use crate::cli::{ActivityCommands, AgentCommands};
+use crate::commands;
 use crate::icons;
 use crate::marks::{self, Begin, Touch};
 use crate::storage;
@@ -221,7 +222,7 @@ fn cancel(project: &str, issue: &str, phase: &str) -> Result<()> {
     Ok(())
 }
 
-/// `tt agent list`: every open mark, newest first, in `cli::list`'s shape —
+/// `tt agent list`: every open mark, newest first, in `commands::list`'s shape —
 /// header, blank line, rows at the status-glyph indent, or a bare
 /// `No open marks.`
 fn list() -> Result<()> {
@@ -298,7 +299,7 @@ fn run_audit(auto_log: bool) -> Result<()> {
 /// docs/decisions/0002-auto-logging-unaccounted-activity.md.
 fn write_auto_log(item: &audit::Unaccounted) -> Result<()> {
     let minutes = item.end.signed_duration_since(item.start).num_minutes();
-    cli::log(
+    commands::log(
         "unattended activity #auto".to_string(),
         format!("{}m", round_five(minutes)),
         Vec::new(),
@@ -366,7 +367,7 @@ fn log_entry(
     trim: bool,
     ended_at: Option<DateTime<Local>>,
 ) -> Result<()> {
-    cli::log(
+    commands::log(
         description(project, issue, phase, summary),
         format!("{}m", round_five(minutes)),
         Vec::new(),
@@ -588,9 +589,9 @@ pub const PHASES: [&str; 8] = [
     "plan", "impl", "qa", "review", "docs", "spike", "explore", "ops",
 ];
 
-/// The description `cli::log` is given: the summary, then one tag per axis the
+/// The description `commands::log` is given: the summary, then one tag per axis the
 /// `project` field cannot express — the item (omitted for the `-` sentinel), the
-/// phase, and `#agent`. There is **no bare `#<project>` tag**; `cli::log` runs
+/// phase, and `#agent`. There is **no bare `#<project>` tag**; `commands::log` runs
 /// `parse_tags` over this string to build the entry's tags.
 fn description(project: &str, issue: &str, phase: &str, summary: &str) -> String {
     let mut description = strip_stray_tags(summary);
