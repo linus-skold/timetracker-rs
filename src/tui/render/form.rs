@@ -1,3 +1,4 @@
+use crate::tui::text_input::TextInput;
 use crate::tui::types::{InputField, InputMode};
 use crate::tui::{App, theme};
 use chrono::Local;
@@ -56,6 +57,53 @@ pub(super) fn render_search_bar(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
+/// One form row: the variant, its block label, and the buffer it edits.
+type FormField = (InputField, &'static str, fn(&App) -> &TextInput);
+
+/// Every form field in layout order. Row order here *is* the on-screen order,
+/// the Tab order and the order of the layout chunks, so adding or moving a
+/// field is one row.
+const FIELDS: &[FormField] = &[
+    (InputField::Description, " Description ", |a| {
+        &a.input_description
+    }),
+    (
+        InputField::Project,
+        " Project (optional: single name, e.g. acme) ",
+        |a| &a.input_project,
+    ),
+    (
+        InputField::Tags,
+        " Tags (space-separated, e.g., work meeting) ",
+        |a| &a.input_tags,
+    ),
+    (
+        InputField::Duration,
+        " Duration (optional: 1h30m, 45m, 2h) ",
+        |a| &a.input_duration,
+    ),
+    (
+        InputField::StartTime,
+        " Start Time (e.g. 9am, 14:30, 25/03 9.30am) ",
+        |a| &a.input_start_time,
+    ),
+    (
+        InputField::EndTime,
+        " End Time (optional: e.g. 9am, 14:30, 25/03 9.30am) ",
+        |a| &a.input_end_time,
+    ),
+];
+
+/// The chunk the help row sits in: straight after the last field.
+const HELP_CHUNK: usize = FIELDS.len();
+
+/// One three-line chunk per field, then the help row, then the slack.
+fn form_constraints() -> Vec<Constraint> {
+    let mut constraints = vec![Constraint::Length(3); FIELDS.len() + 1];
+    constraints.push(Constraint::Min(0));
+    constraints
+}
+
 pub(super) fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     let is_editing = app.input_mode == InputMode::EditingEntry;
     let form_title = if is_editing {
@@ -75,16 +123,7 @@ pub(super) fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(2)
-        .constraints([
-            Constraint::Length(3), // Description
-            Constraint::Length(3), // Project
-            Constraint::Length(3), // Tags
-            Constraint::Length(3), // Duration
-            Constraint::Length(3), // Start Time
-            Constraint::Length(3), // End Time
-            Constraint::Length(3), // Help
-            Constraint::Min(0),
-        ])
+        .constraints(form_constraints())
         .split(area);
 
     fn field_block(label: &'static str, active: bool) -> Block<'static> {
@@ -107,43 +146,9 @@ pub(super) fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
 
     let active = app.input_field;
 
-    // In chunk order, which is also the Tab order.
-    let fields = [
-        (
-            InputField::Description,
-            &app.input_description,
-            " Description ",
-        ),
-        (
-            InputField::Project,
-            &app.input_project,
-            " Project (optional: single name, e.g. acme) ",
-        ),
-        (
-            InputField::Tags,
-            &app.input_tags,
-            " Tags (space-separated, e.g., work meeting) ",
-        ),
-        (
-            InputField::Duration,
-            &app.input_duration,
-            " Duration (optional: 1h30m, 45m, 2h) ",
-        ),
-        (
-            InputField::StartTime,
-            &app.input_start_time,
-            " Start Time (e.g. 9am, 14:30, 25/03 9.30am) ",
-        ),
-        (
-            InputField::EndTime,
-            &app.input_end_time,
-            " End Time (optional: e.g. 9am, 14:30, 25/03 9.30am) ",
-        ),
-    ];
-
-    for (i, (field, input, label)) in fields.into_iter().enumerate() {
+    for (i, (field, label, input)) in FIELDS.iter().copied().enumerate() {
         f.render_widget(
-            Paragraph::new(input.value())
+            Paragraph::new(input(app).value())
                 .style(Style::default().fg(Color::White))
                 .block(field_block(label, active == field)),
             chunks[i],
@@ -171,14 +176,49 @@ pub(super) fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(theme::highlight()),
             )),
     );
-    f.render_widget(help, chunks[6]);
+    f.render_widget(help, chunks[HELP_CHUNK]);
 
-    if let Some((i, (_, input, _))) = fields
-        .into_iter()
+    if let Some((i, (_, _, input))) = FIELDS
+        .iter()
+        .copied()
         .enumerate()
         .find(|(_, (field, _, _))| *field == active)
     {
-        let width = Line::from(input.before_cursor()).width() as u16;
+        let width = Line::from(input(app).before_cursor()).width() as u16;
         f.set_cursor_position((chunks[i].x + width + 1, chunks[i].y + 1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_constraints_follow_the_field_table() {
+        let constraints = form_constraints();
+        // one chunk per field, then help, then the slack
+        assert_eq!(constraints.len(), FIELDS.len() + 2);
+        assert!(
+            constraints[..=HELP_CHUNK]
+                .iter()
+                .all(|c| *c == Constraint::Length(3))
+        );
+        assert_eq!(constraints[constraints.len() - 1], Constraint::Min(0));
+    }
+
+    #[test]
+    fn the_table_holds_every_field_in_tab_order() {
+        let rows: Vec<InputField> = FIELDS.iter().map(|(field, _, _)| *field).collect();
+        assert_eq!(
+            rows,
+            vec![
+                InputField::Description,
+                InputField::Project,
+                InputField::Tags,
+                InputField::Duration,
+                InputField::StartTime,
+                InputField::EndTime,
+            ]
+        );
     }
 }
