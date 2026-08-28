@@ -10,7 +10,7 @@ use crate::duration;
 use crate::icons;
 use crate::report;
 use crate::storage::{load_data, with_data};
-use crate::tracker::{IdleInterval, format_tags, parse_tags};
+use crate::tracker::{IdleInterval, TimeEntry, format_tags, parse_tags};
 
 /// Print the completion hook for `eval` at shell startup. The hook embeds this
 /// binary's absolute path, so it is regenerated on every startup, never saved;
@@ -76,6 +76,31 @@ fn project_display(project: Option<&String>) -> String {
         Some(p) => format!(" ({})", p),
         None => String::new(),
     }
+}
+
+/// One entry as `today` and `list` print it. They differ only in the date
+/// column, so `with_date` is the whole difference between the two listings.
+fn entry_line(entry: &TimeEntry, with_date: bool) -> String {
+    let status = if entry.is_active() {
+        entry.status_icon()
+    } else {
+        "  "
+    };
+    let date = if with_date {
+        format!("{} ", entry.start_time.format("%Y-%m-%d"))
+    } else {
+        String::new()
+    };
+    format!(
+        "{}{}{} - {}{}{} ({})",
+        status,
+        date,
+        entry.start_time.format("%H:%M"),
+        entry.description,
+        project_display(entry.project.as_ref()),
+        tags_display(&entry.tags),
+        entry.format_duration()
+    )
 }
 
 pub fn start(description: Vec<String>, project: Option<String>) -> Result<()> {
@@ -220,25 +245,7 @@ pub fn today() -> Result<()> {
 
     println!("{} Today's entries:\n", icons::calendar());
     for entry in &today_entries {
-        let status = if entry.is_active() {
-            entry.status_icon()
-        } else {
-            "  "
-        };
-        let tags_display = if entry.tags.is_empty() {
-            String::new()
-        } else {
-            format!(" [{}]", entry.format_tags())
-        };
-        println!(
-            "{}{} - {}{}{} ({})",
-            status,
-            entry.start_time.format("%H:%M"),
-            entry.description,
-            project_display(entry.project.as_ref()),
-            tags_display,
-            entry.format_duration()
-        );
+        println!("{}", entry_line(entry, false));
     }
     println!("\nTotal: {}", duration::format(data.today_total()));
     Ok(())
@@ -255,26 +262,7 @@ pub fn list(limit: Option<usize>) -> Result<()> {
 
     println!("{} All entries:\n", icons::list());
     for entry in data.entries.iter().rev().take(limit) {
-        let status = if entry.is_active() {
-            entry.status_icon()
-        } else {
-            "  "
-        };
-        let tags_display = if entry.tags.is_empty() {
-            String::new()
-        } else {
-            format!(" [{}]", entry.format_tags())
-        };
-        println!(
-            "{}{} {} - {}{}{} ({})",
-            status,
-            entry.start_time.format("%Y-%m-%d"),
-            entry.start_time.format("%H:%M"),
-            entry.description,
-            project_display(entry.project.as_ref()),
-            tags_display,
-            entry.format_duration()
-        );
+        println!("{}", entry_line(entry, true));
     }
     Ok(())
 }
