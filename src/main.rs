@@ -66,7 +66,8 @@ fn main() -> Result<()> {
         Commands::Start {
             description,
             project,
-        } => commands::start(description, project),
+            data,
+        } => commands::start(description, project, data),
         Commands::Stop => commands::stop(),
         Commands::Log {
             description,
@@ -75,6 +76,7 @@ fn main() -> Result<()> {
             project,
             idle,
             trim,
+            data,
         } => commands::log(commands::LogRequest {
             description,
             time,
@@ -83,6 +85,7 @@ fn main() -> Result<()> {
             idle,
             trim,
             ended_at: None,
+            data,
         }),
         Commands::Today => commands::today(),
         Commands::Report {
