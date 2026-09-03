@@ -2,14 +2,23 @@
 
 ## Commands
 
-### `tt start <description>`
+### `tt start <description> [-p <project>] [-s <time>]`
 
 Start tracking a new task. Only one task can be active at a time.  
 Tags can be embedded inline using `#tag` syntax.
 
+- `-p` / `--project` — project this entry belongs to *(optional)*
+- `-s` / `--start` — back-date the start to a time of day today *(optional)*
+
+The start time is a clock time written the way you say it — `9.30`, `9:30`,
+`0930` or a bare `9` — always on today's date. A time still to come today is a
+usage error: the flag back-dates a task that was already underway, it does not
+schedule one.
+
 ```sh
 tt start Working on login page
 tt start Fixing auth bug #backend #bugfix
+tt start -p timetracker -s 9.30 Reviewing the release notes
 ```
 
 ---
