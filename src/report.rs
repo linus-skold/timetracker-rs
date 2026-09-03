@@ -365,6 +365,7 @@ mod tests {
             start_time: start,
             end_time: Some(start + Duration::minutes(minutes)),
             idle: Vec::new(),
+            data: None,
         }
     }
 

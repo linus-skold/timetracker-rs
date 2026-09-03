@@ -18,6 +18,11 @@ pub struct TimeEntry {
     /// Silent stretches inside this entry's span, as `tt log --idle` recorded them.
     #[serde(default)]
     pub idle: Vec<IdleInterval>,
+    /// Free-form JSON hung on the entry by `--data` or the form's Data field.
+    /// Always an object; see [`crate::entry_data`], which is the only thing that
+    /// builds one. Skipped when unset, so entries without it are unchanged on disk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 /// One silent stretch inside an entry.
@@ -295,6 +300,7 @@ impl TimeData {
             start_time,
             end_time,
             idle: Vec::new(),
+            data: None,
         };
         self.next_id += 1;
         self.entries.push(entry);
@@ -387,6 +393,19 @@ impl TimeData {
         }
     }
 
+    /// Set (or with `None`, clear) an entry's custom data. Separate from
+    /// `add_entry`/`update_entry` so every writer — `--data`, the form — goes
+    /// through one place, and `None` always means "clear it".
+    pub fn set_entry_data(&mut self, id: u64, data: Option<serde_json::Value>) -> bool {
+        match self.entries.iter_mut().find(|e| e.id == id) {
+            Some(entry) => {
+                entry.data = data;
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Get an entry by ID
     pub fn get_entry(&self, id: u64) -> Option<&TimeEntry> {
         self.entries.iter().find(|e| e.id == id)
@@ -397,7 +416,8 @@ impl TimeData {
     /// first, or an empty vec when nothing changed.
     ///
     /// The earliest piece keeps the original id in place, later pieces take fresh
-    /// ids from `next_id`, and every piece inherits description, project and tags.
+    /// ids from `next_id`, and every piece inherits description, project, tags
+    /// and custom data.
     ///
     /// [`TimeEntry::trim_spans`] owns the arithmetic; this is the mutation and the
     /// id policy only, pure over `&mut self` so the caller owns the transaction.
@@ -441,6 +461,7 @@ impl TimeData {
                     start_time: piece_start,
                     end_time: Some(piece_end),
                     idle: inside,
+                    data: template.data.clone(),
                 });
                 ids.push(new_id);
             }
@@ -466,6 +487,7 @@ mod tests {
             start_time: Local::now(),
             end_time: None,
             idle: Vec::new(),
+            data: None,
         }
     }
 
@@ -557,6 +579,7 @@ mod tests {
                         )
                     })
                     .collect(),
+                data: None,
             }],
             next_id: 8,
             schema_version: 1,
@@ -768,6 +791,66 @@ mod tests {
     }
 
     #[test]
+    fn custom_data_is_absent_from_the_json_until_it_is_set() {
+        let mut data = TimeData {
+            entries: vec![entry(1, None, &["tt"])],
+            next_id: 2,
+            schema_version: 1,
+        };
+        assert!(
+            !serde_json::to_string(&data).unwrap().contains("\"data\""),
+            "an unset field must not appear on disk"
+        );
+
+        assert!(data.set_entry_data(1, Some(serde_json::json!({"pr": 69}))));
+        assert!(!data.set_entry_data(999, None), "an unknown id");
+
+        let round_tripped: TimeData =
+            serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap();
+        assert_eq!(
+            round_tripped.entries[0].data,
+            Some(serde_json::json!({"pr": 69}))
+        );
+
+        assert!(data.set_entry_data(1, None));
+        assert_eq!(data.entries[0].data, None, "None clears it");
+    }
+
+    #[test]
+    fn a_store_written_before_custom_data_existed_loads_with_none() {
+        let json = r#"{
+            "entries": [
+                {
+                    "id": 1,
+                    "description": "an older entry",
+                    "tags": [],
+                    "start_time": "2026-08-18T09:00:00+02:00",
+                    "end_time": "2026-08-18T10:00:00+02:00"
+                }
+            ],
+            "next_id": 2,
+            "schema_version": 1
+        }"#;
+
+        let data: TimeData = serde_json::from_str(json).unwrap();
+        assert_eq!(data.entries[0].data, None, "absent means none");
+    }
+
+    /// Trimming copies the data onto every piece, the way it copies the tags.
+    #[test]
+    fn split_pieces_inherit_the_custom_data() {
+        let mut data = logged_with_idle(120, &[(50, 80)]);
+        data.set_entry_data(7, Some(serde_json::json!({"issue": 69})));
+
+        data.split_at_idle(7);
+
+        assert_eq!(data.entries.len(), 2);
+        for entry in &data.entries {
+            assert_eq!(entry.data, Some(serde_json::json!({"issue": 69})));
+        }
+    }
+
+    #[test]
     fn migrate_is_idempotent() {
         let mut data = TimeData {
             entries: vec![entry(1, None, &["tt", "impl"])],
@@ -806,6 +889,7 @@ mod tests {
             start_time: start,
             end_time: Some(start + Duration::minutes(minutes)),
             idle: Vec::new(),
+            data: None,
         }
     }
 

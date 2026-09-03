@@ -412,6 +412,7 @@ mod tests {
             start_time: Local::now(),
             end_time: None,
             idle: Vec::new(),
+            data: None,
         }
     }
 
@@ -817,6 +818,7 @@ mod tests {
             start_time: start,
             end_time: Some(start + chrono::Duration::minutes(minutes)),
             idle: Vec::new(),
+            data: None,
         }
     }
 
@@ -2858,6 +2860,7 @@ mod tests {
                     start_time: start,
                     end_time: Some(start + chrono::Duration::hours(2)),
                     idle: Vec::new(),
+                    data: None,
                 },
                 dated(7, "unrelated", "vinge", &["ops"], today),
             ],

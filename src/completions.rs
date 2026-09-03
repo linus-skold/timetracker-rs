@@ -170,6 +170,7 @@ mod tests {
             start_time: Local::now(),
             end_time: None,
             idle: Vec::new(),
+            data: None,
         }
     }
 

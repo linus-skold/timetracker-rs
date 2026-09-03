@@ -8,6 +8,7 @@ mod commands;
 mod completions;
 mod config;
 mod duration;
+mod entry_data;
 mod icons;
 mod marks;
 mod paths;
