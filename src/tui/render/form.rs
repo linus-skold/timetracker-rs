@@ -92,6 +92,11 @@ const FIELDS: &[FormField] = &[
         " End Time (optional: e.g. 9am, 14:30, 25/03 9.30am) ",
         |a| &a.input_end_time,
     ),
+    (
+        InputField::Data,
+        " Data (optional: a JSON object, e.g. {\"pr\": 42}) ",
+        |a| &a.input_data,
+    ),
 ];
 
 /// The chunk the help row sits in: straight after the last field.
@@ -155,6 +160,19 @@ pub(super) fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         );
     }
 
+    // A refused save replaces the hint: the row says why nothing was written
+    // rather than the form appearing to ignore Enter.
+    let trailing = match &app.form_error {
+        // The same colour onboarding reports its own failure in.
+        Some(message) => Span::styled(
+            message.clone(),
+            Style::default().fg(theme::theme().duration_high).bold(),
+        ),
+        None => Span::styled(
+            "Need ≥2 of: Start, End, Duration".to_string(),
+            Style::default().fg(theme::border()),
+        ),
+    };
     let help = Paragraph::new(Line::from(vec![
         Span::styled("Tab", Style::default().fg(theme::accent())),
         Span::styled(": switch field | ", Style::default().fg(theme::inactive())),
@@ -162,10 +180,7 @@ pub(super) fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(": save | ", Style::default().fg(theme::inactive())),
         Span::styled("Esc", Style::default().fg(theme::accent())),
         Span::styled(": cancel  ", Style::default().fg(theme::inactive())),
-        Span::styled(
-            "Need ≥2 of: Start, End, Duration",
-            Style::default().fg(theme::border()),
-        ),
+        trailing,
     ]))
     .block(
         Block::default()
@@ -218,6 +233,7 @@ mod tests {
                 InputField::Duration,
                 InputField::StartTime,
                 InputField::EndTime,
+                InputField::Data,
             ]
         );
     }

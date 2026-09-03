@@ -62,6 +62,11 @@ pub(crate) struct App {
     pub(crate) input_start_time: TextInput,
     pub(crate) input_end_time: TextInput,
     pub(crate) input_duration: TextInput,
+    /// The Data field's raw text: compact JSON, or empty for no data.
+    pub(crate) input_data: TextInput,
+    /// Why the last save was refused, shown in the form's help row and cleared
+    /// by the next keystroke. Only invalid JSON raises one today.
+    pub(crate) form_error: Option<String>,
     pub(crate) search_term: TextInput,
     /// Each pane's tri-state filter. OR within a pane's includes, AND across the two.
     pub(crate) project_filter: panes::PaneFilter,
@@ -162,6 +167,8 @@ impl App {
             input_start_time: TextInput::default(),
             input_end_time: TextInput::default(),
             input_duration: TextInput::default(),
+            input_data: TextInput::default(),
+            form_error: None,
             search_term: TextInput::default(),
             project_filter: panes::PaneFilter::default(),
             tag_filter: panes::PaneFilter::default(),
@@ -2061,6 +2068,7 @@ mod tests {
             " Duration (optional",
             " Start Time (",
             " End Time (optional",
+            " Data (optional",
             " Add Log Entry ", // the help row's own block title
         ]
         .iter()
@@ -2096,6 +2104,100 @@ mod tests {
         assert_eq!(second.1 - first.1, 3, "cursor did not follow the Tab order");
         // "héllo" is five columns wide, "acme" four — both share the chunk's x.
         assert_eq!(first.0 - second.0, 1, "cursor column ignored display width");
+    }
+
+    /// #73: what the Data field holds is parsed and stored on save.
+    #[test]
+    fn the_form_saves_the_data_field_as_json() {
+        let _guard = env_guard();
+        sandbox("form-data-save");
+        seed(vec![], 0);
+
+        let mut app = App::new().unwrap();
+        app.start_adding();
+        app.input_description.set_from("with data");
+        app.input_duration.set_from("30m");
+        app.input_data.set_from(r#"{"pr": 42}"#);
+        app.submit_entry().unwrap();
+
+        assert_eq!(app.input_mode, InputMode::Normal, "the form stayed open");
+        let stored = storage::load_data().unwrap();
+        assert_eq!(stored.entries[0].data, Some(serde_json::json!({"pr": 42})));
+    }
+
+    /// #72: invalid JSON refuses the save, says so, and writes nothing.
+    #[test]
+    fn invalid_json_refuses_the_save_and_reports_it() {
+        let _guard = env_guard();
+        sandbox("form-data-invalid");
+        seed(vec![], 0);
+
+        let mut app = App::new().unwrap();
+        app.start_adding();
+        app.input_description.set_from("with data");
+        app.input_duration.set_from("30m");
+        app.input_data.set_from("{not json");
+        app.submit_entry().unwrap();
+
+        assert_eq!(
+            app.input_mode,
+            InputMode::AddingEntry,
+            "the form closed over a value it never saved"
+        );
+        assert!(app.form_error.is_some(), "no reason was given");
+        assert!(
+            storage::load_data().unwrap().entries.is_empty(),
+            "a refused save still wrote an entry"
+        );
+        // The message reaches the screen, in the help row.
+        let screen = frame_lines(&mut app, 120, 40).join("\n");
+        assert!(screen.contains("invalid JSON"), "not shown:\n{screen}");
+
+        // Typing clears it, and a valid value then saves.
+        app.input_field = InputField::Data;
+        app.handle_input_backspace();
+        assert_eq!(app.form_error, None, "the error outlived the edit");
+        app.input_data.set_from(r#"{"ok": true}"#);
+        app.submit_entry().unwrap();
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(
+            storage::load_data().unwrap().entries[0].data,
+            Some(serde_json::json!({"ok": true}))
+        );
+    }
+
+    /// Editing round-trips the stored JSON through the field, and blanking it
+    /// clears the entry's data rather than leaving the old value behind.
+    #[test]
+    fn editing_round_trips_the_data_field_and_a_blank_clears_it() {
+        let _guard = env_guard();
+        sandbox("form-data-edit");
+        let mut with_data = entry(0, "has data");
+        with_data.end_time = Some(with_data.start_time + chrono::Duration::hours(1));
+        with_data.data = Some(serde_json::json!({"pr": 42}));
+        seed(vec![with_data], 1);
+
+        let mut app = App::new().unwrap();
+        app.table_state.select(Some(0));
+        app.start_editing();
+        assert_eq!(app.input_data.value(), r#"{"pr":42}"#);
+
+        app.input_data.set_from(r#"{"pr":43}"#);
+        app.submit_edit().unwrap();
+        assert_eq!(
+            storage::load_data().unwrap().entries[0].data,
+            Some(serde_json::json!({"pr": 43}))
+        );
+
+        app.table_state.select(Some(0));
+        app.start_editing();
+        app.input_data.clear();
+        app.submit_edit().unwrap();
+        assert_eq!(
+            storage::load_data().unwrap().entries[0].data,
+            None,
+            "a blank field left the old data in place"
+        );
     }
 
     /// #70: the popover lists the custom JSON as key/value rows under a Data
