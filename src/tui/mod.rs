@@ -2098,6 +2098,50 @@ mod tests {
         assert_eq!(first.0 - second.0, 1, "cursor column ignored display width");
     }
 
+    /// #70: the popover lists the custom JSON as key/value rows under a Data
+    /// header, flattening nesting rather than printing raw JSON.
+    #[test]
+    fn the_detail_popover_renders_custom_data_as_key_value_rows() {
+        let _guard = env_guard();
+        sandbox("detail-data");
+        let mut with_data = entry(0, "has data");
+        with_data.data = Some(serde_json::json!({
+            "pr": 42,
+            "review": {"by": "linus"},
+        }));
+        seed(vec![with_data], 1);
+
+        let mut app = App::new().unwrap();
+        app.table_state.select(Some(0));
+        app.open_detail();
+        let screen = frame_lines(&mut app, 100, 40).join("\n");
+
+        assert!(screen.contains("Data"), "no Data header:\n{screen}");
+        assert!(screen.contains("pr"), "no key row:\n{screen}");
+        assert!(screen.contains("42"), "no value:\n{screen}");
+        assert!(
+            screen.contains("review.by") && screen.contains("linus"),
+            "nesting was not flattened:\n{screen}"
+        );
+        assert!(!screen.contains('{'), "raw JSON leaked in:\n{screen}");
+    }
+
+    /// An entry without data is rendered exactly as it was before the field existed.
+    #[test]
+    fn the_detail_popover_has_no_data_section_without_data() {
+        let _guard = env_guard();
+        sandbox("detail-no-data");
+        seed(vec![entry(0, "plain")], 1);
+
+        let mut app = App::new().unwrap();
+        app.table_state.select(Some(0));
+        app.open_detail();
+        let screen = frame_lines(&mut app, 100, 40).join("\n");
+
+        assert!(screen.contains("Description"), "the popover did draw");
+        assert!(!screen.contains("Data"), "an empty Data header:\n{screen}");
+    }
+
     #[test]
     fn the_agents_panel_renders_the_unaccounted_section_when_flagged() {
         let _guard = env_guard();
