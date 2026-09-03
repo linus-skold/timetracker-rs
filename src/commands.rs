@@ -2,7 +2,7 @@
 //! `cli.rs` defines what the arguments are; this module is what they do.
 
 use anyhow::Result;
-use chrono::{DateTime, Duration, Local, NaiveDate};
+use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime};
 
 use crate::completions;
 use crate::config;
@@ -103,10 +103,44 @@ fn entry_line(entry: &TimeEntry, with_date: bool) -> String {
     )
 }
 
-pub fn start(description: Vec<String>, project: Option<String>) -> Result<()> {
+/// Resolve a `-s/--start` time of day against the day `now` falls on.
+///
+/// The flag exists to back-date a task that was already underway, so a time
+/// still to come is a mistake worth refusing rather than a task that starts in
+/// the future and reads as negative until the clock catches up.
+fn resolve_start(clock: NaiveTime, now: DateTime<Local>) -> Result<DateTime<Local>> {
+    let started = now
+        .date_naive()
+        .and_time(clock)
+        .and_local_timezone(Local)
+        .earliest()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "{} does not exist today — the clock skips it for daylight saving",
+                clock.format("%H:%M")
+            )
+        })?;
+    if started > now {
+        anyhow::bail!(
+            "{} is still to come today; --start back-dates, it does not schedule",
+            clock.format("%H:%M")
+        );
+    }
+    Ok(started)
+}
+
+pub fn start(
+    description: Vec<String>,
+    project: Option<String>,
+    started_at: Option<NaiveTime>,
+) -> Result<()> {
     let raw_desc = description.join(" ");
     let (desc, tags) = parse_tags(&raw_desc);
-    let start_time = Local::now();
+    let now = Local::now();
+    let start_time = match started_at {
+        Some(clock) => resolve_start(clock, now)?,
+        None => now,
+    };
 
     // One lock for the check and the insert, so two starts cannot both see nothing.
     let already_tracking = with_data(|data| {
@@ -371,6 +405,7 @@ mod tests {
     use crate::storage;
     use crate::storage::env_guard;
     use crate::storage::env_sandbox as sandbox;
+    use chrono::{TimeZone, Timelike};
     use clap::Parser;
 
     fn parse_log(args: &[&str]) -> Commands {
@@ -534,5 +569,46 @@ mod tests {
         assert_eq!(data.entries.len(), 1, "recording is not trimming");
         assert_eq!(data.entries[0].duration(), chrono::Duration::minutes(60));
         assert_eq!(data.entries[0].idle.len(), 1, "the interval is still there");
+    }
+    /// `--start` back-dates the active entry rather than starting it now, so
+    /// `tt status` already shows the elapsed time when it is first asked.
+    #[test]
+    fn start_back_dates_the_active_entry_to_the_given_clock_time() {
+        let _guard = env_guard();
+        sandbox("start-back-dated");
+        let now = Local::now();
+        let clock = (now - Duration::minutes(90)).time().with_second(0).unwrap();
+
+        start(
+            vec!["reading".into(), "the".into(), "spec".into()],
+            Some("timetracker".into()),
+            Some(clock),
+        )
+        .unwrap();
+
+        let data = storage::load_data().unwrap();
+        let entry = data.active_entry().expect("an active entry");
+        assert_eq!(
+            entry.start_time.time(),
+            clock,
+            "stored at the asked-for clock time"
+        );
+        assert_eq!(entry.project.as_deref(), Some("timetracker"));
+    }
+
+    #[test]
+    fn a_start_time_still_to_come_is_refused_rather_than_scheduled() {
+        let now = Local
+            .with_ymd_and_hms(2026, 9, 3, 10, 0, 0)
+            .single()
+            .unwrap();
+        assert!(
+            resolve_start(NaiveTime::from_hms_opt(9, 30, 0).unwrap(), now).is_ok(),
+            "half an hour ago is exactly what the flag is for"
+        );
+        assert!(
+            resolve_start(NaiveTime::from_hms_opt(10, 30, 0).unwrap(), now).is_err(),
+            "a future time is a mistake, not a scheduled task"
+        );
     }
 }
