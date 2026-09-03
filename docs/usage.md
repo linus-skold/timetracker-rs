@@ -10,7 +10,10 @@ Tags can be embedded inline using `#tag` syntax.
 ```sh
 tt start Working on login page
 tt start Fixing auth bug #backend #bugfix
+tt start Reviewing the PR --data '{"pr": 42}'
 ```
+
+`--data` hangs a JSON object on the entry — see [Custom data](#custom-data).
 
 ---
 
@@ -31,6 +34,7 @@ Log a completed task with an explicit duration. Useful for recording work after 
 - `-d` / `--description` — description of the task
 - `-t` / `--time` — duration (see [Duration Format](#duration-format))
 - `--tags` — comma-separated list of tags *(optional)*
+- `--data` — a JSON object of custom data *(optional; see [Custom data](#custom-data))*
 
 Tags can also be embedded inline in the description using `#tag` syntax. Both styles can be combined.
 
@@ -208,6 +212,31 @@ Tags can be added to any entry in two ways:
 2. **Explicit flag** with `tt log --tags tagA,tagB,tagC`
 
 Both methods can be combined and duplicates are automatically removed.
+
+---
+
+## Custom data
+
+Any entry can carry a JSON object of its own, for information tags and a
+description have nowhere to put — a PR number, a build id, whatever the caller
+wants to read back later.
+
+```sh
+tt log -d "Code review" -t 45m --data '{"pr": 42, "repo": "timetracker-rs"}'
+tt agent end tt 69 impl "json data field" --data '{"pr": 74}'
+```
+
+The value must be a **JSON object**. Invalid JSON, or valid JSON that is not an
+object (a bare number, a string, an array), is a usage error — the entry is
+never recorded with the field silently dropped.
+
+`--data` is accepted by `tt start`, `tt log`, `tt agent item` and `tt agent
+end`. In the TUI, the entry form's **Data** field edits the same value as one
+line of compact JSON, and refuses to save what it cannot parse; the entry detail
+popover (`Enter`) lists it as key/value rows under a **Data** header, with
+nested keys flattened to `review.by` and array elements to `files[0]`.
+
+Trimming an entry copies its data onto every piece.
 
 ---
 
