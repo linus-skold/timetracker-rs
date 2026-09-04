@@ -30,6 +30,9 @@ pub enum Commands {
         /// "0930" or "9". A time still to come today is a usage error.
         #[arg(short = 's', long = "start", value_name = "TIME", value_parser = parse_clock)]
         started_at: Option<NaiveTime>,
+        /// Custom data as a JSON object, e.g. `--data '{"pr": 42}'`
+        #[arg(long, value_parser = parse_data)]
+        data: Option<serde_json::Value>,
     },
     /// Stop the current active task
     Stop,
@@ -58,6 +61,9 @@ pub enum Commands {
         /// silent no-op.
         #[arg(long, requires = "idle")]
         trim: bool,
+        /// Custom data as a JSON object, e.g. `--data '{"pr": 42}'`
+        #[arg(long, value_parser = parse_data)]
+        data: Option<serde_json::Value>,
     },
     /// Show all entries for today
     Today,
@@ -189,6 +195,9 @@ pub enum AgentCommands {
         summary: Option<String>,
         /// Whole minutes, rounded up to the nearest 5 minutes
         minutes: Option<String>,
+        /// Custom data as a JSON object, e.g. `--data '{"pr": 42}'`
+        #[arg(long, value_parser = parse_data)]
+        data: Option<serde_json::Value>,
     },
     /// Close a marked phase, measuring it to its last heartbeat
     End {
@@ -212,6 +221,9 @@ pub enum AgentCommands {
         /// each one
         #[arg(long)]
         trim: bool,
+        /// Custom data as a JSON object, e.g. `--data '{"pr": 42}'`
+        #[arg(long, value_parser = parse_data)]
+        data: Option<serde_json::Value>,
     },
     /// Hook-only activity ledger, hidden from `--help` — never called by the
     /// model. See docs/decisions/0001-agent-activity-tracking.md.
@@ -294,6 +306,14 @@ fn parse_duration(value: &str) -> Result<Duration, String> {
             value
         )
     })
+}
+
+/// Parse one `--data` value into the entry's custom data. Invalid JSON — or JSON
+/// that isn't an object — is a usage error, never an entry that silently dropped
+/// the field. Passing the flag means meaning it, so an empty value is refused too.
+fn parse_data(value: &str) -> Result<serde_json::Value, String> {
+    crate::entry_data::parse(value)?
+        .ok_or_else(|| "expected a JSON object, got an empty value".to_string())
 }
 
 /// Parse one `-s/--start` value: a time of day today, written the way a person
@@ -448,6 +468,55 @@ mod tests {
         );
     }
 
+    /// #72: a `--data` value that is not a JSON object is a usage error, so no
+    /// command can record an entry whose custom data was silently dropped.
+    #[test]
+    fn a_malformed_data_value_is_a_usage_error() {
+        for bad in [r#"{"a": }"#, "{", "not json", "[1,2]", "42", ""] {
+            let parsed = Cli::try_parse_from(["tt", "log", "-d", "x", "-t", "5m", "--data", bad]);
+            assert!(parsed.is_err(), "`{bad}` parsed instead of failing");
+        }
+    }
+
+    #[test]
+    fn a_json_object_parses_on_every_command_that_takes_data() {
+        let object = r#"{"pr": 42, "nested": {"ok": true}}"#;
+        let expected: serde_json::Value = serde_json::from_str(object).unwrap();
+
+        for args in [
+            vec!["tt", "start", "x", "--data", object],
+            vec!["tt", "log", "-d", "x", "-t", "5m", "--data", object],
+            vec![
+                "tt", "agent", "item", "p", "-", "impl", "s", "5", "--data", object,
+            ],
+            vec![
+                "tt", "agent", "end", "p", "-", "impl", "s", "--data", object,
+            ],
+        ] {
+            let cli = Cli::try_parse_from(&args)
+                .unwrap_or_else(|e| panic!("{args:?} failed to parse: {e}"));
+            let data = match cli.command {
+                Commands::Start { data, .. } | Commands::Log { data, .. } => data,
+                Commands::Agent { command } => match command {
+                    AgentCommands::Item { data, .. } | AgentCommands::End { data, .. } => data,
+                    _ => panic!("not a data-carrying agent command"),
+                },
+                _ => panic!("not a data-carrying command"),
+            };
+            assert_eq!(data, Some(expected.clone()), "{args:?}");
+        }
+    }
+
+    /// Omitting the flag leaves the field unset, so nothing is written to it.
+    #[test]
+    fn data_is_none_when_the_flag_is_absent() {
+        let cli = Cli::try_parse_from(["tt", "log", "-d", "x", "-t", "5m"]).unwrap();
+        match cli.command {
+            Commands::Log { data, .. } => assert_eq!(data, None),
+            _ => panic!("not a log command"),
+        }
+    }
+
     #[test]
     fn a_well_formed_idle_value_parses_to_the_epoch_seconds_given() {
         let interval = parse_idle("1700000000-1700000600").unwrap();
@@ -467,10 +536,12 @@ mod tests {
                 description,
                 project,
                 started_at,
+                data,
             } => {
                 assert_eq!(description, vec!["writing".to_string()]);
                 assert_eq!(project.as_deref(), Some("tt"));
                 assert_eq!(started_at, NaiveTime::from_hms_opt(9, 30, 0));
+                assert_eq!(data, None, "no --data was passed");
             }
             _ => panic!("not a start command"),
         }

@@ -300,6 +300,26 @@ pub(super) fn render_detail_popup(f: &mut Frame, app: &App) {
     }
     lines.push(Line::from(Span::raw("")));
 
+    // The custom JSON, flattened to one labelled row per leaf. Absent entirely
+    // when there is no data, so the popover is unchanged for entries without it.
+    let data_rows = entry
+        .data
+        .as_ref()
+        .map(crate::entry_data::rows)
+        .unwrap_or_default();
+    if !data_rows.is_empty() {
+        lines.push(Line::from(label("Data")));
+        for (key, item) in &data_rows {
+            lines.extend(field(
+                key,
+                item,
+                Style::default().fg(theme::highlight()),
+                value_width,
+            ));
+        }
+        lines.push(Line::from(Span::raw("")));
+    }
+
     let (marker, marker_style) = if entry.is_active() {
         (" active ", Style::default().fg(theme::active()).bold())
     } else {

@@ -97,6 +97,9 @@ pub enum InputField {
     StartTime,
     EndTime,
     Duration,
+    /// Custom JSON, edited as one line of compact JSON. Validated on save, never
+    /// while typing — see `App::submit_entry`.
+    Data,
 }
 
 /// One of the two collapsible value pickers above the tabs row.

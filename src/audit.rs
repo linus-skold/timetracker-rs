@@ -226,6 +226,7 @@ mod tests {
             start_time: at(start),
             end_time: end.map(at),
             idle: Vec::new(),
+            data: None,
         }
     }
 

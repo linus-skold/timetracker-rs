@@ -4,14 +4,16 @@ use super::types::{InputField, InputMode, ViewMode};
 use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDate};
 
-/// A submittable form resolved into the fields `add_entry` takes: description,
-/// tags, start, and the end an open entry does not have.
-type EntryFields = (
-    String,
-    Vec<String>,
-    DateTime<Local>,
-    Option<DateTime<Local>>,
-);
+/// A submittable form resolved into what the store takes: description, tags,
+/// start, the end an open entry does not have, and the custom JSON.
+struct EntryFields {
+    description: String,
+    tags: Vec<String>,
+    start_time: DateTime<Local>,
+    end_time: Option<DateTime<Local>>,
+    /// `None` for a blank Data field, which clears the entry's data on an edit.
+    data: Option<serde_json::Value>,
+}
 
 impl App {
     pub(crate) fn start_adding(&mut self) {
@@ -39,6 +41,8 @@ impl App {
         self.input_start_time.clear();
         self.input_end_time.clear();
         self.input_duration.clear();
+        self.input_data.clear();
+        self.form_error = None;
     }
 
     pub(crate) fn start_editing(&mut self) {
@@ -56,13 +60,18 @@ impl App {
                             .end_time
                             .map(|t| t.format("%Y-%m-%d %H:%M").to_string()),
                         entry.end_time.map(|_| entry.format_duration()),
+                        crate::entry_data::to_edit_string(entry.data.as_ref()),
                     )
                 })
             })
         };
 
-        if let Some((id, description, project, tags, start_time, end_time, duration)) = entry_data {
+        if let Some((id, description, project, tags, start_time, end_time, duration, data)) =
+            entry_data
+        {
             self.editing_entry_id = Some(id);
+            self.input_data.set_from(&data);
+            self.form_error = None;
             self.input_description.set_from(&description);
             self.input_project.set_from(&project);
             self.input_tags.set_from(&tags);
@@ -75,29 +84,60 @@ impl App {
     }
 
     /// Validates the current form input and resolves it into entry fields.
-    /// Returns `None` if the form isn't currently submittable (empty
-    /// description, unresolvable start/end times).
-    fn build_entry_fields(&self) -> Option<EntryFields> {
+    /// `Ok(None)` is "not submittable yet" — an empty description or
+    /// unresolvable start/end times, both of which the user is still typing
+    /// their way out of. `Err` is a value that will never resolve however much
+    /// more is typed: today only invalid JSON in the Data field.
+    fn build_entry_fields(&self) -> Result<Option<EntryFields>, String> {
         if self.input_description.is_empty() {
-            return None;
+            return Ok(None);
         }
-        let (start_time, end_time) = self.resolve_times()?;
-        Some((
-            self.input_description.value().to_string(),
-            self.parse_tags(),
+        // Parsed before the times, so a bad Data field is reported even while the
+        // times are still half-typed.
+        let data = crate::entry_data::parse(self.input_data.value())?;
+        let Some((start_time, end_time)) = self.resolve_times() else {
+            return Ok(None);
+        };
+        Ok(Some(EntryFields {
+            description: self.input_description.value().to_string(),
+            tags: self.parse_tags(),
             start_time,
             end_time,
-        ))
+            data,
+        }))
+    }
+
+    /// The fields to save, or `None` when there is nothing to save yet. A
+    /// rejected value is left on screen with `form_error` set, so nothing is
+    /// written and the form stays open on what the user typed.
+    fn fields_to_save(&mut self) -> Option<EntryFields> {
+        match self.build_entry_fields() {
+            Ok(fields) => fields,
+            Err(message) => {
+                self.form_error = Some(message);
+                None
+            }
+        }
     }
 
     pub(crate) fn submit_entry(&mut self) -> Result<()> {
-        let Some((description, tags, start_time, end_time)) = self.build_entry_fields() else {
+        let Some(fields) = self.fields_to_save() else {
             return Ok(());
         };
+        let EntryFields {
+            description,
+            tags,
+            start_time,
+            end_time,
+            data,
+        } = fields;
         let project = self.parse_project();
         // Added against the freshly loaded store, so the id is the current `next_id`.
-        self.mutate_store(|data| {
-            data.add_entry(description, project, tags, start_time, end_time);
+        self.mutate_store(|store| {
+            let id = store
+                .add_entry(description, project, tags, start_time, end_time)
+                .id;
+            store.set_entry_data(id, data);
         })?;
         self.cancel_adding();
         Ok(())
@@ -107,13 +147,22 @@ impl App {
         let Some(entry_id) = self.editing_entry_id else {
             return Ok(());
         };
-        let Some((description, tags, start_time, end_time)) = self.build_entry_fields() else {
+        let Some(fields) = self.fields_to_save() else {
             return Ok(());
         };
+        let EntryFields {
+            description,
+            tags,
+            start_time,
+            end_time,
+            data,
+        } = fields;
         let project = self.parse_project();
         // Updating an id that is no longer in the store returns false, not an error.
-        self.mutate_store(|data| {
-            data.update_entry(entry_id, description, project, tags, start_time, end_time)
+        self.mutate_store(|store| {
+            // A blank Data field clears the entry's data, so an edit can remove it.
+            store.set_entry_data(entry_id, data);
+            store.update_entry(entry_id, description, project, tags, start_time, end_time)
         })?;
         self.cancel_adding();
         Ok(())
@@ -128,7 +177,8 @@ impl App {
             InputField::Tags => InputField::Duration,
             InputField::Duration => InputField::StartTime,
             InputField::StartTime => InputField::EndTime,
-            InputField::EndTime => InputField::Description,
+            InputField::EndTime => InputField::Data,
+            InputField::Data => InputField::Description,
         };
         self.field_mut().cursor_to_end();
     }
@@ -137,21 +187,25 @@ impl App {
         let leaving = self.input_field;
         self.apply_time_calculations(leaving);
         self.input_field = match self.input_field {
-            InputField::Description => InputField::EndTime,
+            InputField::Description => InputField::Data,
             InputField::Project => InputField::Description,
             InputField::Tags => InputField::Project,
             InputField::Duration => InputField::Tags,
             InputField::StartTime => InputField::Duration,
             InputField::EndTime => InputField::StartTime,
+            InputField::Data => InputField::EndTime,
         };
         self.field_mut().cursor_to_end();
     }
 
     pub(crate) fn handle_input_char(&mut self, c: char) {
+        // Typing is the fix for whatever the last save was refused over.
+        self.form_error = None;
         self.field_mut().insert(c);
     }
 
     pub(crate) fn handle_input_backspace(&mut self) {
+        self.form_error = None;
         self.field_mut().backspace();
     }
 
@@ -166,6 +220,7 @@ impl App {
             InputField::StartTime => &mut self.input_start_time,
             InputField::EndTime => &mut self.input_end_time,
             InputField::Duration => &mut self.input_duration,
+            InputField::Data => &mut self.input_data,
         }
     }
 

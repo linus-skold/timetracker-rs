@@ -133,6 +133,7 @@ pub fn start(
     description: Vec<String>,
     project: Option<String>,
     started_at: Option<NaiveTime>,
+    data: Option<serde_json::Value>,
 ) -> Result<()> {
     let raw_desc = description.join(" ");
     let (desc, tags) = parse_tags(&raw_desc);
@@ -143,17 +144,22 @@ pub fn start(
     };
 
     // One lock for the check and the insert, so two starts cannot both see nothing.
-    let already_tracking = with_data(|data| {
-        if let Some(active) = data.active_entry() {
+    let already_tracking = with_data(|store| {
+        if let Some(active) = store.active_entry() {
             return Ok(Some((active.description.clone(), active.start_time)));
         }
-        data.add_entry(
-            desc.clone(),
-            project.clone(),
-            tags.clone(),
-            start_time,
-            None,
-        );
+        let id = store
+            .add_entry(
+                desc.clone(),
+                project.clone(),
+                tags.clone(),
+                start_time,
+                None,
+            )
+            .id;
+        if data.is_some() {
+            store.set_entry_data(id, data.clone());
+        }
         Ok(None)
     })?;
 
@@ -218,6 +224,8 @@ pub struct LogRequest {
     pub trim: bool,
     /// Pins the timeline; see [`log`].
     pub ended_at: Option<DateTime<Local>>,
+    /// Custom JSON data, already validated by [`crate::entry_data::parse`].
+    pub data: Option<serde_json::Value>,
 }
 
 /// Record a finished entry, back-dated from its end. `ended_at` pins the
@@ -232,6 +240,7 @@ pub fn log(request: LogRequest) -> Result<()> {
         idle,
         trim,
         ended_at,
+        data: custom_data,
     } = request;
     let end_time = ended_at.unwrap_or_else(Local::now);
     let start_time = end_time - time;
@@ -255,6 +264,10 @@ pub fn log(request: LogRequest) -> Result<()> {
             .id;
         if let Some(entry) = data.entries.iter_mut().find(|e| e.id == entry_id) {
             entry.idle = idle;
+        }
+        if custom_data.is_some() {
+            // Set before the split, so every piece inherits it.
+            data.set_entry_data(entry_id, custom_data.clone());
         }
         // Do not lift this out of the closure: the insert and the split are one
         // store transaction.
@@ -423,6 +436,7 @@ mod tests {
                 project,
                 idle,
                 trim,
+                data,
             } => log(LogRequest {
                 description,
                 time,
@@ -431,6 +445,7 @@ mod tests {
                 idle,
                 trim,
                 ended_at: None,
+                data,
             })
             .unwrap(),
             _ => panic!("parse_log produced something other than a Log command"),
@@ -551,6 +566,74 @@ mod tests {
     }
 
     #[test]
+    fn data_is_stored_on_the_logged_entry() {
+        let _guard = env_guard();
+        sandbox("log-data");
+
+        run_log(parse_log(&[
+            "-d",
+            "with data",
+            "-t",
+            "30m",
+            "--data",
+            r#"{"pr": 42}"#,
+        ]));
+
+        let data = storage::load_data().unwrap();
+        assert_eq!(
+            data.entries[0].data,
+            Some(serde_json::json!({"pr": 42})),
+            "--data did not reach the store"
+        );
+    }
+
+    /// Trimming happens after the data is set, so each piece carries it.
+    #[test]
+    fn data_lands_on_every_piece_of_a_trimmed_entry() {
+        let _guard = env_guard();
+        sandbox("log-data-trim");
+        let end = Local::now().timestamp();
+        let start = end - 7200;
+
+        run_log(parse_log(&[
+            "-d",
+            "long session",
+            "-t",
+            "2h",
+            &format!("--idle={}-{}", start + 600, start + 1500),
+            "--trim",
+            "--data",
+            r#"{"issue": 69}"#,
+        ]));
+
+        let stored = storage::load_data().unwrap();
+        assert_eq!(stored.entries.len(), 2);
+        for entry in &stored.entries {
+            assert_eq!(entry.data, Some(serde_json::json!({"issue": 69})));
+        }
+    }
+
+    #[test]
+    fn start_stores_its_data_on_the_active_entry() {
+        let _guard = env_guard();
+        sandbox("start-data");
+
+        start(
+            vec!["writing".to_string(), "docs".to_string()],
+            Some("tt".to_string()),
+            None,
+            Some(serde_json::json!({"branch": "feat/69"})),
+        )
+        .unwrap();
+
+        let stored = storage::load_data().unwrap();
+        assert_eq!(
+            stored.entries[0].data,
+            Some(serde_json::json!({"branch": "feat/69"}))
+        );
+    }
+
+    #[test]
     fn idle_without_trim_leaves_a_single_entry() {
         let _guard = env_guard();
         sandbox("log-no-trim");
@@ -583,6 +666,7 @@ mod tests {
             vec!["reading".into(), "the".into(), "spec".into()],
             Some("timetracker".into()),
             Some(clock),
+            None,
         )
         .unwrap();
 

@@ -247,6 +247,7 @@ mod tests {
             start_time: Local::now() - chrono::Duration::hours(2),
             end_time: Some(Local::now() - chrono::Duration::hours(1)),
             idle: Vec::new(),
+            data: None,
         }
     }
 

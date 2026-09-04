@@ -9,6 +9,7 @@ Tags can be embedded inline using `#tag` syntax.
 
 - `-p` / `--project` — project this entry belongs to *(optional)*
 - `-s` / `--start` — back-date the start to a time of day today *(optional)*
+- `--data` — a JSON object of custom data *(optional; see [Custom data](#custom-data))*
 
 The start time is a clock time written the way you say it — `9.30`, `9:30`,
 `0930` or a bare `9` — always on today's date. A time still to come today is a
@@ -19,6 +20,7 @@ schedule one.
 tt start Working on login page
 tt start Fixing auth bug #backend #bugfix
 tt start -p timetracker -s 9.30 Reviewing the release notes
+tt start Reviewing the PR --data '{"pr": 42}'
 ```
 
 ---
@@ -40,6 +42,7 @@ Log a completed task with an explicit duration. Useful for recording work after 
 - `-d` / `--description` — description of the task
 - `-t` / `--time` — duration (see [Duration Format](#duration-format))
 - `--tags` — comma-separated list of tags *(optional)*
+- `--data` — a JSON object of custom data *(optional; see [Custom data](#custom-data))*
 
 Tags can also be embedded inline in the description using `#tag` syntax. Both styles can be combined.
 
@@ -217,6 +220,31 @@ Tags can be added to any entry in two ways:
 2. **Explicit flag** with `tt log --tags tagA,tagB,tagC`
 
 Both methods can be combined and duplicates are automatically removed.
+
+---
+
+## Custom data
+
+Any entry can carry a JSON object of its own, for information tags and a
+description have nowhere to put — a PR number, a build id, whatever the caller
+wants to read back later.
+
+```sh
+tt log -d "Code review" -t 45m --data '{"pr": 42, "repo": "timetracker-rs"}'
+tt agent end tt 69 impl "json data field" --data '{"pr": 74}'
+```
+
+The value must be a **JSON object**. Invalid JSON, or valid JSON that is not an
+object (a bare number, a string, an array), is a usage error — the entry is
+never recorded with the field silently dropped.
+
+`--data` is accepted by `tt start`, `tt log`, `tt agent item` and `tt agent
+end`. In the TUI, the entry form's **Data** field edits the same value as one
+line of compact JSON, and refuses to save what it cannot parse; the entry detail
+popover (`Enter`) lists it as key/value rows under a **Data** header, with
+nested keys flattened to `review.by` and array elements to `files[0]`.
+
+Trimming an entry copies its data onto every piece.
 
 ---
 
