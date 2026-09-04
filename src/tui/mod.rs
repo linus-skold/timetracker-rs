@@ -2210,22 +2210,75 @@ mod tests {
         with_data.data = Some(serde_json::json!({
             "pr": 42,
             "review": {"by": "linus"},
+            "files": ["a.rs", "b.rs"],
         }));
         seed(vec![with_data], 1);
 
         let mut app = App::new().unwrap();
         app.table_state.select(Some(0));
         app.open_detail();
-        let screen = frame_lines(&mut app, 100, 40).join("\n");
+        let screen = frame_lines(&mut app, 100, 40);
+        let joined = screen.join("\n");
+        let row_of = |needle: &str| {
+            screen
+                .iter()
+                .position(|line| line.contains(needle))
+                .unwrap_or_else(|| panic!("{needle} is missing:\n{joined}"))
+        };
 
-        assert!(screen.contains("Data"), "no Data header:\n{screen}");
-        assert!(screen.contains("pr"), "no key row:\n{screen}");
-        assert!(screen.contains("42"), "no value:\n{screen}");
+        // One popover row's text, with the frame it is drawn inside removed.
+        let inner = |row: usize| screen[row].trim_matches(['│', ' ']).to_string();
+        let header = screen
+            .iter()
+            .position(|line| line.trim_matches(['│', ' ']) == "Data")
+            .unwrap_or_else(|| panic!("no Data header:\n{joined}"));
         assert!(
-            screen.contains("review.by") && screen.contains("linus"),
-            "nesting was not flattened:\n{screen}"
+            inner(header + 1).is_empty(),
+            "no blank row under the Data header:\n{joined}"
         );
-        assert!(!screen.contains('{'), "raw JSON leaked in:\n{screen}");
+        assert!(joined.contains("pr"), "no key row:\n{joined}");
+        assert!(joined.contains("42"), "no value:\n{joined}");
+        assert!(
+            joined.contains("review.by") && joined.contains("linus"),
+            "nesting was not flattened:\n{joined}"
+        );
+        // The list reads as a list: a heading, then one bullet per item.
+        assert_eq!(
+            inner(row_of("files:")),
+            "files:",
+            "the list heading carried a value:\n{joined}"
+        );
+        for (item, row) in [("a.rs", row_of("a.rs")), ("b.rs", row_of("b.rs"))] {
+            let shown = inner(row);
+            assert!(
+                shown.starts_with('-') && shown.ends_with(item),
+                "`{shown}` is not a bullet for {item}:\n{joined}"
+            );
+        }
+        assert!(!joined.contains("files[0]"), "indexed rows:\n{joined}");
+        assert!(!joined.contains('{'), "raw JSON leaked in:\n{joined}");
+    }
+
+    /// The written order is the rendered order, whatever the alphabet says.
+    #[test]
+    fn the_detail_popover_keeps_the_data_in_written_order() {
+        let _guard = env_guard();
+        sandbox("detail-data-order");
+        let mut with_data = entry(0, "has data");
+        with_data.data = Some(serde_json::from_str(r#"{"zebra": 1, "apple": 2}"#).unwrap());
+        seed(vec![with_data], 1);
+
+        let mut app = App::new().unwrap();
+        app.table_state.select(Some(0));
+        app.open_detail();
+        let screen = frame_lines(&mut app, 100, 40);
+        let row_of = |needle: &str| screen.iter().position(|l| l.contains(needle)).unwrap();
+
+        assert!(
+            row_of("zebra") < row_of("apple"),
+            "the rows were sorted:\n{}",
+            screen.join("\n")
+        );
     }
 
     /// An entry without data is rendered exactly as it was before the field existed.
