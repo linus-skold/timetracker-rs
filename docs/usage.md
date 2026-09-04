@@ -232,26 +232,9 @@ never recorded with the field silently dropped.
 
 `--data` is accepted by `tt start`, `tt log`, `tt agent item` and `tt agent
 end`. In the TUI, the entry form's **Data** field edits the same value as one
-line of compact JSON, and refuses to save what it cannot parse.
-
-The entry detail popover (`Enter`) lists the data under a **Data** header, in
-the order it was written — never sorted. Nested object keys are flattened to
-`review.by`; a list gets a heading and one bullet per item:
-
-```
-  Data
-
-  branch      feat/69
-  reviews:
-    -
-      by      linus
-      ok      true
-    - skipped
-  files:
-    - a.rs
-    - b.rs
-  pr          75
-```
+line of compact JSON, and refuses to save what it cannot parse; the entry detail
+popover (`Enter`) lists it as key/value rows under a **Data** header, with
+nested keys flattened to `review.by` and array elements to `files[0]`.
 
 Trimming an entry copies its data onto every piece.
 

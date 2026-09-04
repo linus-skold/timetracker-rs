@@ -308,36 +308,14 @@ pub(super) fn render_detail_popup(f: &mut Frame, app: &App) {
         .map(crate::entry_data::rows)
         .unwrap_or_default();
     if !data_rows.is_empty() {
-        let data_style = Style::default().fg(theme::highlight());
         lines.push(Line::from(label("Data")));
-        lines.push(Line::from(Span::raw("")));
-        for row in &data_rows {
-            match row {
-                // Aligned with every other field on the popover.
-                crate::entry_data::Row::Field { label: key, value } => {
-                    lines.extend(field(key, value, data_style, value_width));
-                }
-                crate::entry_data::Row::Heading(key) => lines.push(Line::from(label(key))),
-                // Tight against the bullet, so a list reads as a list; wrapped
-                // with a hanging indent under its own first character.
-                crate::entry_data::Row::Bullet { label: dash, value } => {
-                    let head = format!("  {} ", dash);
-                    let hanging = " ".repeat(head.chars().count());
-                    for (i, text) in wrap(value, value_width).into_iter().enumerate() {
-                        lines.push(Line::from(vec![
-                            Span::styled(
-                                if i == 0 {
-                                    head.clone()
-                                } else {
-                                    hanging.clone()
-                                },
-                                Style::default().fg(theme::title()),
-                            ),
-                            Span::styled(text, data_style),
-                        ]));
-                    }
-                }
-            }
+        for (key, item) in &data_rows {
+            lines.extend(field(
+                key,
+                item,
+                Style::default().fg(theme::highlight()),
+                value_width,
+            ));
         }
         lines.push(Line::from(Span::raw("")));
     }

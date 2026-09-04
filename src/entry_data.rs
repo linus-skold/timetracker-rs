@@ -46,95 +46,45 @@ pub fn to_edit_string(data: Option<&Value>) -> String {
     data.map(|v| v.to_string()).unwrap_or_default()
 }
 
-/// One display row. Every label already carries its indentation, so the renderer
-/// only decides colour and where the value sits.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Row {
-    /// `key        value` — the value in the detail popover's value column,
-    /// aligned with every other field on the popover.
-    Field { label: String, value: String },
-    /// A label with nothing beside it: a list's name, or a bare bullet standing
-    /// over the fields of one list item.
-    Heading(String),
-    /// `- value` — a list item, its value tight against the bullet rather than
-    /// out in the value column, so a list reads as a list. The label is the
-    /// indented dash; the renderer puts one space between the two.
-    Bullet { label: String, value: String },
-}
-
-/// Two spaces per level of nesting, the same step the bullets are indented by.
-const INDENT: &str = "  ";
-
-/// Flatten the object into display rows, in the order the data was written.
-///
-/// Nested objects join their keys with `.`, so an object stays one row per leaf.
-/// A list instead gets a heading of its own and one indented `- value` bullet
-/// per item, which reads as a list rather than as `name[0]`, `name[1]`, …
-pub fn rows(data: &Value) -> Vec<Row> {
+/// Flatten the object into display rows, one `(key, value)` per leaf. Nested
+/// objects join their keys with `.` and arrays index with `[i]`, so every row is
+/// one line however deep the data goes.
+pub fn rows(data: &Value) -> Vec<(String, String)> {
     let mut out = Vec::new();
     // The top level is walked here rather than through `flatten`, so an empty
     // object is no rows at all instead of one `{}` row with no key.
     match data {
         Value::Object(map) => {
             for (key, child) in map {
-                flatten(key.clone(), child, 0, &mut out);
+                flatten(key.clone(), child, &mut out);
             }
         }
-        other => flatten(String::new(), other, 0, &mut out),
+        other => flatten(String::new(), other, &mut out),
     }
     out
 }
 
-fn field(label: String, value: String) -> Row {
-    Row::Field { label, value }
-}
-
-fn flatten(path: String, value: &Value, depth: usize, out: &mut Vec<Row>) {
+fn flatten(prefix: String, value: &Value, out: &mut Vec<(String, String)>) {
     match value {
         Value::Object(map) if !map.is_empty() => {
             for (key, child) in map {
-                let path = if path.is_empty() {
+                let path = if prefix.is_empty() {
                     key.clone()
                 } else {
-                    format!("{}.{}", path, key)
+                    format!("{}.{}", prefix, key)
                 };
-                flatten(path, child, depth, out);
+                flatten(path, child, out);
             }
         }
         Value::Array(items) if !items.is_empty() => {
-            // A list nested straight inside a list item has no name of its own;
-            // the bullet above it is heading enough, so its own bullets sit at
-            // that depth rather than under an empty heading.
-            let depth = if path.is_empty() {
-                depth.saturating_sub(1)
-            } else {
-                out.push(Row::Heading(label(&format!("{}:", path), depth)));
-                depth
-            };
-            for child in items {
-                match child {
-                    // A nested item gets a bare bullet, with its own rows
-                    // indented under it, so `-` always starts exactly one item.
-                    Value::Object(_) | Value::Array(_) => {
-                        out.push(Row::Heading(label("-", depth + 1)));
-                        flatten(String::new(), child, depth + 2, out);
-                    }
-                    // A scalar item is the bullet itself.
-                    _ => out.push(Row::Bullet {
-                        label: label("-", depth + 1),
-                        value: scalar(child),
-                    }),
-                }
+            for (i, child) in items.iter().enumerate() {
+                flatten(format!("{}[{}]", prefix, i), child, out);
             }
         }
         // A leaf, plus the two empty containers — shown as themselves rather
         // than vanishing from the listing.
-        _ => out.push(field(label(&path, depth), scalar(value))),
+        _ => out.push((prefix, scalar(value))),
     }
-}
-
-fn label(text: &str, depth: usize) -> String {
-    format!("{}{}", INDENT.repeat(depth), text)
 }
 
 /// A leaf as it reads on screen: strings unquoted, everything else as JSON.
@@ -190,71 +140,35 @@ mod tests {
         assert_eq!(to_edit_string(None), "");
     }
 
-    /// Rows as text: `label|value` for an aligned field, `label value` for a
-    /// bullet, so both the indentation and which shape each row took are visible.
-    fn shown(value: &Value) -> Vec<String> {
-        rows(value)
-            .into_iter()
-            .map(|row| match row {
-                Row::Field { label, value } => format!("{}|{}", label, value),
-                Row::Heading(label) => label,
-                Row::Bullet { label, value } => format!("{} {}", label, value),
-            })
-            .collect()
-    }
-
-    /// Objects stay one row per leaf, keyed by their dotted path.
     #[test]
-    fn rows_flatten_objects_into_one_line_each() {
+    fn rows_flatten_nesting_into_one_line_each() {
+        let value = json!({
+            "pr": 42,
+            "review": {"by": "linus", "approved": true},
+            "files": ["a.rs", "b.rs"],
+        });
         assert_eq!(
-            shown(&json!({"pr": 42, "review": {"by": "linus", "approved": true}})),
-            vec!["pr|42", "review.by|linus", "review.approved|true"]
-        );
-    }
-
-    /// Written order, not alphabetical: the keys above come back b-before-a.
-    #[test]
-    fn rows_keep_the_order_the_data_was_written_in() {
-        let value: Value = serde_json::from_str(r#"{"zebra": 1, "apple": 2}"#).unwrap();
-        assert_eq!(shown(&value), vec!["zebra|1", "apple|2"]);
-    }
-
-    /// A list is a heading plus one bullet per item, never `name[0]`.
-    #[test]
-    fn rows_render_an_array_as_a_heading_and_bullets() {
-        assert_eq!(
-            shown(&json!({"files": ["a.rs", "b.rs"], "pr": 42})),
-            vec!["files:", "  - a.rs", "  - b.rs", "pr|42"]
-        );
-    }
-
-    /// An item that is itself a container gets a bare bullet, with its own rows
-    /// under it, so one `-` always starts exactly one item.
-    #[test]
-    fn rows_indent_the_fields_of_a_nested_list_item() {
-        assert_eq!(
-            shown(&json!({"reviews": [{"by": "linus", "ok": true}, "skipped"]})),
+            rows(&value),
             vec![
-                "reviews:",
-                "  -",
-                "    by|linus",
-                "    ok|true",
-                "  - skipped",
-            ]
-        );
-    }
-
-    #[test]
-    fn rows_indent_a_list_inside_a_list() {
-        assert_eq!(
-            shown(&json!({"groups": [["a", "b"]]})),
-            vec!["groups:", "  -", "    - a", "    - b"]
+                ("files[0]".to_string(), "a.rs".to_string()),
+                ("files[1]".to_string(), "b.rs".to_string()),
+                ("pr".to_string(), "42".to_string()),
+                ("review.approved".to_string(), "true".to_string()),
+                ("review.by".to_string(), "linus".to_string()),
+            ],
+            "serde_json orders object keys alphabetically"
         );
     }
 
     #[test]
     fn empty_containers_still_get_a_row() {
-        assert_eq!(shown(&json!({"a": {}, "b": []})), vec!["a|{}", "b|[]"]);
+        assert_eq!(
+            rows(&json!({"a": {}, "b": []})),
+            vec![
+                ("a".to_string(), "{}".to_string()),
+                ("b".to_string(), "[]".to_string()),
+            ]
+        );
         assert!(rows(&json!({})).is_empty(), "nothing to show at all");
     }
 }

@@ -13,9 +13,7 @@ clap = { version = "4", features = ["derive"] }
 clap_complete = { version = "4", features = ["unstable-dynamic"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
-# `preserve_order`: an entry's custom data keeps the order it was written in,
-# rather than being sorted alphabetically on the way to the detail view.
-serde_json = { version = "1", features = ["preserve_order"] }
+serde_json = "1"
 directories = "5"
 anyhow = "1"
 toml = "0.8"
