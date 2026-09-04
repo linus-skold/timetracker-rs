@@ -66,8 +66,9 @@ fn main() -> Result<()> {
         Commands::Start {
             description,
             project,
+            started_at,
             data,
-        } => commands::start(description, project, data),
+        } => commands::start(description, project, started_at, data),
         Commands::Stop => commands::stop(),
         Commands::Log {
             description,
