@@ -10,6 +10,7 @@ set -eu
 
 REPO="linus-skold/timetracker-rs"
 INSTALL_DIR="${TT_INSTALL_DIR:-$HOME/.local/bin}"
+windows_target="pc-windows-msvc"
 
 os="$(uname -s)"
 arch="$(uname -m)"
@@ -19,7 +20,7 @@ case "$os" in
   Linux) os_part="unknown-linux-gnu" ;;
   Darwin) os_part="apple-darwin" ;;
   MINGW*|MSYS*|CYGWIN*)
-    os_part="pc-windows-msvc"
+    os_part="$windows_target"
     bin_name="tt.exe"
     ;;
   *)
@@ -35,7 +36,7 @@ case "$arch" in
       echo "error: no prebuilt tt binary for Linux/$arch yet" >&2
       exit 1
     fi
-    if [ "$os_part" = "pc-windows-msvc" ]; then
+    if [ "$os_part" = "$windows_target" ]; then
       echo "error: no prebuilt tt binary for Windows/$arch yet" >&2
       exit 1
     fi
@@ -49,7 +50,7 @@ esac
 
 target="${arch_part}-${os_part}"
 asset="tt-${target}"
-if [ "$os_part" = "pc-windows-msvc" ]; then
+if [ "$os_part" = "$windows_target" ]; then
   asset="${asset}.exe"
 fi
 url="https://github.com/${REPO}/releases/latest/download/${asset}"
@@ -74,7 +75,7 @@ trap - EXIT
 
 echo "Installed tt to $INSTALL_DIR/$bin_name"
 
-if [ "$os_part" = "pc-windows-msvc" ]; then
+if [ "$os_part" = "$windows_target" ]; then
   bashrc="$HOME/.bashrc"
   case "$INSTALL_DIR" in
     "$HOME")
