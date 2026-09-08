@@ -1,2 +1,18 @@
 [tools]
 rust = "1.95.0"
+# Provides `cargo set-version`, which the `bump` task below drives.
+"cargo:cargo-edit" = "latest"
+
+# `mise bump patch` (also minor, major). mise appends the trailing argument to
+# the command, so the level reaches `--bump` as-is; cargo rejects anything that
+# is not a valid level.
+#
+# Rewrites `version` in Cargo.toml *and* the crate's own entry in Cargo.lock, so
+# the two stay in step without a build. CI reads the version straight out of
+# Cargo.toml and tags the release from it — see .github/workflows/build.yml.
+#
+# Leaves the change uncommitted on purpose: the bump goes to main as its own
+# `chore: version bump X.Y.Z` PR, and merging that is what cuts the release.
+[tasks.bump]
+description = "Bump the crate version in Cargo.toml and Cargo.lock: mise bump <major|minor|patch>"
+run = "cargo set-version --bump"

@@ -41,3 +41,17 @@ tt today
 
 See [docs/usage.md](docs/usage.md) for the full command reference, duration
 format, tags, data storage location, and configuration file options.
+
+## Releasing
+
+Releases are cut from `Cargo.toml`: pushing a version to `main` that has no
+matching tag makes CI tag it and publish the binaries. To bump it, with
+[mise](https://mise.jdx.dev) installed:
+
+```sh
+mise bump patch   # or: minor, major
+```
+
+That rewrites the version in both `Cargo.toml` and `Cargo.lock` without a
+build. Commit the two files as `chore: version bump X.Y.Z` and open a PR;
+merging it is what releases.
