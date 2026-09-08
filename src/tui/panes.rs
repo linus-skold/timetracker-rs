@@ -273,6 +273,7 @@ impl App {
                 .copied()
                 .map_or(Focus::Table, Focus::Pane);
         }
+        self.persist_layout();
     }
 
     /// `Tab`: entries table → each visible pane, left to right → back.

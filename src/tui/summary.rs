@@ -108,6 +108,7 @@ impl App {
     /// `Shift-S`: show or hide the surface.
     pub(crate) fn toggle_summary(&mut self) {
         self.show_summary = !self.show_summary;
+        self.persist_layout();
     }
 }
 

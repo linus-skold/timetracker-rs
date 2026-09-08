@@ -234,6 +234,24 @@ impl App {
         Ok(result)
     }
 
+    /// Which surfaces are open right now, in config shape.
+    pub(crate) fn layout_config(&self) -> crate::config::LayoutConfig {
+        crate::config::LayoutConfig {
+            show_projects: Some(self.show_projects),
+            show_agents: Some(self.show_marks),
+            show_summary: Some(self.show_summary),
+            show_tags: Some(self.show_tags),
+        }
+    }
+
+    /// Write the open surfaces back to the config file, so the next run starts
+    /// the way this one was left. Best-effort: a failed write must not take the
+    /// session down, and the terminal is in raw mode so there is nowhere to
+    /// report it — the toggle still holds for the rest of the session.
+    pub(crate) fn persist_layout(&self) {
+        let _ = crate::config::save_layout(&self.layout_config());
+    }
+
     /// The one place `data` is replaced, by `mutate_store` and by `reload`.
     /// Bumping `data_revision` here is what makes the derived-view caches notice
     /// the new store, so a bare `self.data = …` elsewhere would go unseen.
@@ -1339,6 +1357,33 @@ mod tests {
         assert!(app.leases.is_empty(), "no beats read while hidden");
         assert!(app.unaccounted.is_empty(), "and nothing reconciled");
         assert!(app.liveness_at.is_none(), "the interval never started");
+    }
+
+    /// Toggling a surface writes it back, so the next run opens the same way.
+    /// Read off disk rather than through `config::load`, whose resolved value
+    /// is cached for the process once read.
+    #[test]
+    fn toggling_a_surface_persists_the_layout() {
+        let _guard = env_guard();
+        sandbox("layout-persist");
+        seed(vec![entry(0, "first")], 1);
+
+        let mut app = App::new().unwrap();
+        assert!(!app.show_tags && !app.show_marks, "hidden by default");
+        app.toggle_pane(Pane::Tags);
+        app.toggle_marks();
+        app.toggle_summary();
+
+        let path = std::env::var("TT_CONFIG_FILE").unwrap();
+        let text = std::fs::read_to_string(path).expect("a written config file");
+        let saved: toml::Value = toml::from_str(&text).expect("valid TOML");
+        let layout = &saved["layout"];
+        assert_eq!(layout["show_tags"].as_bool(), Some(true));
+        assert_eq!(layout["show_agents"].as_bool(), Some(true));
+        assert_eq!(layout["show_summary"].as_bool(), Some(true));
+        assert_eq!(layout["show_projects"].as_bool(), Some(false));
+        // A toggle is not an onboarding answer.
+        assert!(saved.get("general").is_none(), "onboarding left untouched");
     }
 
     #[test]

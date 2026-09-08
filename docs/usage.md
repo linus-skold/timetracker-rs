@@ -335,9 +335,9 @@ round_minutes = 0           # 0 logs the actual minutes; N rounds `tt agent end`
 
 [layout]
 show_projects = true   # whether the Projects, Agent, Summary, and Tags panels
-show_agents = false    # start open. Their toggle keys (P/A/S/T) always work
-show_summary = false   # regardless of these defaults.
-show_tags = true
+show_agents = false    # start open. Pressing their toggle keys (P/A/S/T) writes
+show_summary = false   # this section back, so the panels come back next run the
+show_tags = true       # way you left them.
 
 [general]
 onboarding = true          # shown until answered; the app then sets this to false
@@ -346,7 +346,9 @@ auto_check_updates = true  # startup check for a newer release; see `tt update`
 
 `[layout]` and `[general].onboarding` are written automatically the first time
 the TUI runs and its onboarding popup is answered (`s` to move on, `Esc` to
-skip); neither needs to be hand-edited, though both can be. Onboarding's
+skip); `[layout]` is rewritten on every later `P`/`A`/`S`/`T` toggle too, which
+leaves `onboarding` alone. Neither needs to be hand-edited, though both can be.
+Onboarding's
 second screen offers to run `npx skills add linus-skold/timetracker-rs`,
 installing the `AGENTS.md` time-logging contract as a skill for whatever
 coding agent you use.

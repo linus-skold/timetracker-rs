@@ -378,11 +378,22 @@ pub fn updates_enabled(general: &GeneralConfig) -> bool {
 }
 
 /// Persists `[layout]` (replaced wholesale) and sets `[general].onboarding =
-/// false` so the popup stays quiet after running once; other sections pass
-/// through untouched. A parse failure warns and starts fresh rather than
-/// erroring, since an `Err` here would skip the TUI's terminal restore on
-/// the way out.
+/// false` so the popup stays quiet after running once.
 pub fn save_onboarding(layout: &LayoutConfig) -> Result<()> {
+    write_layout(layout, true)
+}
+
+/// Persists `[layout]` alone, leaving `[general].onboarding` as it is — what a
+/// `P`/`T`/`A`/`S` toggle writes, so the surfaces come back the way they were
+/// left without that also counting as having onboarded.
+pub fn save_layout(layout: &LayoutConfig) -> Result<()> {
+    write_layout(layout, false)
+}
+
+/// `[layout]` is replaced wholesale; other sections pass through untouched. A
+/// parse failure warns and starts fresh rather than erroring, since an `Err`
+/// here would skip the TUI's terminal restore on the way out.
+fn write_layout(layout: &LayoutConfig, mark_onboarded: bool) -> Result<()> {
     let Some(path) = config_path() else {
         anyhow::bail!("no config path available (no home/APPDATA directory found)");
     };
@@ -394,7 +405,7 @@ pub fn save_onboarding(layout: &LayoutConfig) -> Result<()> {
             Ok(doc) => doc,
             Err(e) => {
                 eprintln!(
-                    "Warning: config file {} failed to parse while saving onboarding's answer \
+                    "Warning: config file {} failed to parse while saving the layout \
                      ({e:#}); other sections in it will be lost.",
                     path.display()
                 );
@@ -422,25 +433,27 @@ pub fn save_onboarding(layout: &LayoutConfig) -> Result<()> {
         "layout".to_string(),
         toml::Value::try_from(layout).context("serializing layout config")?,
     );
-    match table
-        .entry("general".to_string())
-        .or_insert_with(|| toml::Value::Table(Default::default()))
-        .as_table_mut()
-    {
-        Some(general) => {
-            general.insert("onboarding".to_string(), toml::Value::Boolean(false));
-        }
-        None => {
-            // `general` exists but is not itself a table — replace just that
-            // key rather than failing the whole save.
-            table.insert(
-                "general".to_string(),
-                toml::Value::try_from(GeneralConfig {
-                    onboarding: Some(false),
-                    ..Default::default()
-                })
-                .context("serializing general config")?,
-            );
+    if mark_onboarded {
+        match table
+            .entry("general".to_string())
+            .or_insert_with(|| toml::Value::Table(Default::default()))
+            .as_table_mut()
+        {
+            Some(general) => {
+                general.insert("onboarding".to_string(), toml::Value::Boolean(false));
+            }
+            None => {
+                // `general` exists but is not itself a table — replace just that
+                // key rather than failing the whole save.
+                table.insert(
+                    "general".to_string(),
+                    toml::Value::try_from(GeneralConfig {
+                        onboarding: Some(false),
+                        ..Default::default()
+                    })
+                    .context("serializing general config")?,
+                );
+            }
         }
     }
 
@@ -533,6 +546,28 @@ mod tests {
         let saved = load();
         assert_eq!(saved.layout.show_projects, Some(true));
         assert_eq!(saved.general.onboarding, Some(false));
+        drop(dir);
+    }
+
+    /// A pane toggle saves the layout without also claiming onboarding ran,
+    /// so someone who never finished the popup still sees it next run.
+    #[test]
+    fn save_layout_leaves_the_onboarding_flag_alone() {
+        let _guard = crate::storage::env_guard();
+        let dir = crate::storage::env_sandbox("save-layout-no-onboarding");
+
+        save_layout(&LayoutConfig {
+            show_projects: Some(true),
+            show_agents: Some(true),
+            show_summary: Some(false),
+            show_tags: Some(false),
+        })
+        .unwrap();
+
+        let saved = load();
+        assert_eq!(saved.layout.show_agents, Some(true));
+        assert_eq!(saved.general.onboarding, None);
+        assert!(should_onboard(&saved.general));
         drop(dir);
     }
 

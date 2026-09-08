@@ -64,5 +64,6 @@ impl App {
         self.show_marks = !self.show_marks;
         // Opening the surface must not show a second of nothing.
         self.liveness_at = None;
+        self.persist_layout();
     }
 }
