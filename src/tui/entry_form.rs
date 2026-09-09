@@ -264,11 +264,20 @@ impl App {
             crate::duration::parse(self.input_duration.value()).filter(|d| d.num_seconds() > 0);
 
         match (start, end, dur) {
-            (Some(s), _, Some(d)) => Some((s, Some(s + d))),
-            (Some(s), Some(e), None) => Some((s, Some(e))),
+            /// Resolve start/end from the three fields.
+            ///
+            /// When both Start and End are present, they are authoritative and Duration
+            /// is derived from them. Otherwise Duration is used to derive the missing
+            /// endpoint.
+            (Some(s), Some(e), _) => Some((s, Some(e))),
+
+            // Start + Duration derives End.
+            (Some(s), None, Some(d)) => Some((s, Some(s + d))),
+
+            // End + Duration derives Start.
             (None, Some(e), Some(d)) => Some((e - d, Some(e))),
+
             (None, None, Some(d)) => {
-                // Anchored to selected_date, so a past day's entry lands on that day.
                 let now_time = Local::now().time();
                 let end = self
                     .selected_date
@@ -276,15 +285,19 @@ impl App {
                     .and_local_timezone(Local)
                     .single()
                     .unwrap_or_else(Local::now);
+
                 Some((end - d, Some(end)))
             }
+
             (Some(s), None, None) => Some((s, None)),
+
             _ => None,
         }
     }
 
-    /// Tabbing off Start / End / Duration derives whichever of the other two is still
-    /// blank, preferring to adjust the field the user did not just leave.
+    /// Tabbing off Start / End / Duration derives the missing or dependent field.
+    /// When Start and End are both present, the field being edited is
+    /// authoritative and Duration is recalculated.
     pub(crate) fn apply_time_calculations(&mut self, leaving_field: InputField) {
         let start_str = self.input_start_time.value().to_string();
         let end_str = self.input_end_time.value().to_string();
@@ -304,24 +317,23 @@ impl App {
 
         match leaving_field {
             InputField::StartTime => {
-                if let (Some(s), Some(d)) = (start, dur) {
-                    self.input_end_time
-                        .set_from(&(s + d).format("%Y-%m-%d %H:%M").to_string());
-                } else if let (Some(s), Some(e), None) = (start, end, dur) {
+                if let (Some(s), Some(e)) = (start, end) {
                     let diff = e.signed_duration_since(s);
                     if diff.num_seconds() > 0 {
-                        self.input_duration.set_from(&crate::duration::format(diff));
+                        self.input_duration
+                            .set_from(&crate::duration::format(diff));
                     }
+                } else if let (Some(s), Some(d)) = (start, dur) {
+                    self.input_end_time
+                        .set_from(&(s + d).format("%Y-%m-%d %H:%M").to_string());
                 }
             }
             InputField::EndTime => {
-                if let (Some(_s), Some(e), Some(d)) = (start, end, dur) {
-                    self.input_start_time
-                        .set_from(&(e - d).format("%Y-%m-%d %H:%M").to_string());
-                } else if let (Some(s), Some(e), None) = (start, end, dur) {
+                if let (Some(s), Some(e)) = (start, end) {
                     let diff = e.signed_duration_since(s);
                     if diff.num_seconds() > 0 {
-                        self.input_duration.set_from(&crate::duration::format(diff));
+                        self.input_duration
+                            .set_from(&crate::duration::format(diff));
                     }
                 } else if let (None, Some(e), Some(d)) = (start, end, dur) {
                     self.input_start_time
