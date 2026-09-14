@@ -147,7 +147,7 @@ skill_wanted() {
     1 | y | yes) return 0 ;;
   esac
   [ -r /dev/tty ] || return 1
-  printf '\nInstall the tt-time-logging agent skill, and Claude Code hooks for it? [Y/n] '
+  printf '\nInstall the tt-time-logging skill for your coding agents? [Y/n] '
   read -r reply < /dev/tty || return 1
   case "$reply" in
     [Nn]*) return 1 ;;

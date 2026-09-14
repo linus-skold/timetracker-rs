@@ -62,7 +62,7 @@ function Test-SkillWanted {
         { $_ -in @("1", "y", "yes") } { return $true }
     }
     if (-not [Environment]::UserInteractive) { return $false }
-    $reply = Read-Host "`nInstall the tt-time-logging agent skill, and Claude Code hooks for it? [Y/n]"
+    $reply = Read-Host "`nInstall the tt-time-logging skill for your coding agents? [Y/n]"
     return $reply -notmatch '^\s*[Nn]'
 }
 
