@@ -26,8 +26,9 @@ issue number, or `-`. `<phase>` is one of:
 Everything below is detail on those three commands.
 
 > **Maintainers:** this file is mirrored by `skills/tt-time-logging/SKILL.md`,
+> embedded in the `tt` binary and installed by `tt skill install`, and also
 > published via `npx skills add linus-skold/timetracker-rs`. Keep the two in sync
-> when either changes. Installation, and the one-time `install-hooks.mjs` step
+> when either changes. Installation, and the `install-hooks.mjs` step
 > that wires this contract into Claude Code's
 > `SessionStart`/`UserPromptSubmit`/`Stop` hooks, are documented in
 > `skills/tt-time-logging/README.md`. Note that everything above this note is
@@ -193,11 +194,11 @@ its last row read `[abandoned]`, and the session then stops widening with every
 audit. It reports no row at all while a mark opened alongside it covers that
 whole bound; `[stale]` in `tt agent list` is the only nudge left in that case.
 
-**An existing install must re-run `install-hooks.mjs`.** The hook scripts are
-copied into Claude Code's own hooks directory, so a machine still holding the
-old copies gets no automatic beat at all, and every mark then expires on the
-unvouched grace. Until it is re-run the per-prompt card also carries no session
-id, so nothing can pass `--session`.
+**An existing install must re-run `tt skill install`** (or `install-hooks.mjs`
+directly). The hook scripts are copied into Claude Code's own hooks directory,
+so a machine still holding the old copies gets no automatic beat at all, and
+every mark then expires on the unvouched grace. Until it is re-run the
+per-prompt card also carries no session id, so nothing can pass `--session`.
 
 ## Working in parallel
 
