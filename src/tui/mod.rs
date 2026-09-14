@@ -321,7 +321,12 @@ pub fn run_tui(update_notice: Option<String>) -> Result<()> {
             app.request_skill_install = false;
             with_suspended_terminal(&mut terminal, || {
                 // Best-effort: a failed install must not take onboarding down.
-                if let Err(error) = crate::skill::install(None, true) {
+                if let Err(error) = crate::skill::install(crate::skill::Request {
+                    dir: None,
+                    agents: Vec::new(),
+                    all: false,
+                    hooks: true,
+                }) {
                     println!("Couldn't install the skill: {error}");
                 }
                 println!("Press Enter to return to tt...");

@@ -114,7 +114,18 @@ fn main() -> Result<()> {
         Commands::Agent { command } => agent::run(&command),
         Commands::Update { check, yes } => commands::update(check, yes),
         Commands::Skill { command } => match command {
-            cli::SkillCommands::Install { dir, no_hooks } => skill::install(dir, !no_hooks),
+            cli::SkillCommands::Install {
+                agent,
+                all,
+                dir,
+                no_hooks,
+            } => skill::install(skill::Request {
+                dir,
+                agents: agent,
+                all,
+                hooks: !no_hooks,
+            }),
+            cli::SkillCommands::Targets => skill::list_targets(),
         },
         Commands::Completions { shell } => commands::completions(shell.as_deref()),
     }

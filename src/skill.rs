@@ -2,9 +2,11 @@
 //!
 //! The skill files are embedded at build time, so an installed `tt` places them
 //! with no network access and no `npx skills` — one less thing between a user
-//! and a working contract. `npx skills add` still works, and reaches agents
-//! whose skills directory this command does not know; it is a second route to
-//! the same files, not the only one.
+//! and a working contract. `npx skills add` still works; it is a second route
+//! to the same files, not the only one.
+//!
+//! Supporting another agent is a row in [`TARGETS`], not an installer: every
+//! agent here reads the same `SKILL.md` layout, so only the directory differs.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -46,18 +48,96 @@ const SKILL_FILES: &[(&str, &str)] = &[
     ),
 ];
 
+/// One agent `tt` knows how to install for.
+///
+/// Adding an agent is adding a row. Nothing else in this module knows an
+/// agent's name, so a contribution is the row, a line in the readme, and a case
+/// in the tests.
+#[derive(Debug)]
+pub struct Target {
+    /// What `--agent` takes.
+    pub name: &'static str,
+    /// What the install report calls it.
+    pub label: &'static str,
+    /// The agent's user-level skills directory, relative to the home directory.
+    pub skills_dir: &'static str,
+    /// A home-relative directory that exists once the agent has run. This is
+    /// what "detected" means — we install where an agent actually lives rather
+    /// than scattering directories for tools that are not there.
+    pub probe: &'static str,
+}
+
+/// The agents `tt skill install` knows.
+///
+/// `.agents/skills` is not a guess: Codex, Copilot and Gemini CLI each document
+/// it as the shared, tool-agnostic location, beside their own private one. One
+/// copy there serves all three, so the rows deliberately repeat the path and
+/// the installer folds them back together.
+pub const TARGETS: &[Target] = &[
+    Target {
+        name: "claude",
+        label: "Claude Code",
+        skills_dir: ".claude/skills",
+        probe: ".claude",
+    },
+    Target {
+        name: "codex",
+        label: "Codex CLI",
+        skills_dir: ".agents/skills",
+        probe: ".codex",
+    },
+    Target {
+        name: "copilot",
+        label: "GitHub Copilot",
+        skills_dir: ".agents/skills",
+        probe: ".copilot",
+    },
+    Target {
+        name: "gemini",
+        label: "Gemini CLI",
+        skills_dir: ".agents/skills",
+        probe: ".gemini",
+    },
+];
+
+/// The row `--agent <name>` names.
+pub fn target_named(name: &str) -> Option<&'static Target> {
+    TARGETS.iter().find(|target| target.name == name)
+}
+
+/// Whether this agent's own directory exists under `home`.
+fn is_detected(target: &Target, home: &Path) -> bool {
+    home.join(target.probe).is_dir()
+}
+
 /// Claude Code's per-user directory, `~/.claude`.
 pub fn claude_home() -> Option<PathBuf> {
     paths::home_dir().map(|home| home.join(".claude"))
 }
 
-/// Where the skill goes when the caller names no directory: `$TT_SKILL_DIR`,
-/// else Claude Code's `~/.claude/skills`.
-pub fn default_skills_dir() -> Option<PathBuf> {
-    paths::env_or(
-        std::env::var_os("TT_SKILL_DIR"),
-        claude_home().map(|claude| claude.join("skills")),
-    )
+/// A directory to install into, and the agents served by installing there.
+///
+/// Several agents share one directory, so the report says "Codex CLI, GitHub
+/// Copilot, Gemini CLI" over a single path rather than writing it three times.
+struct Destination {
+    dir: PathBuf,
+    labels: Vec<&'static str>,
+}
+
+/// Folds the chosen targets into one entry per directory, in `TARGETS` order.
+fn destinations(targets: &[&'static Target], home: &Path) -> Vec<Destination> {
+    let mut out: Vec<Destination> = Vec::new();
+    for target in targets {
+        let dir = home.join(target.skills_dir);
+        match out.iter_mut().find(|existing| existing.dir == dir) {
+            Some(existing) => existing.labels.push(target.label),
+            None => out.push(Destination {
+                dir,
+                labels: vec![target.label],
+            }),
+        }
+    }
+    out
 }
 
 /// Writes the embedded skill into `<skills_dir>/tt-time-logging`, overwriting
@@ -111,28 +191,154 @@ fn install_claude_hooks(skill_dir: &Path) {
     }
 }
 
-/// Installs the skill, and unless `hooks` is false, Claude Code's hooks for it.
-pub fn install(skills_dir: Option<PathBuf>, hooks: bool) -> Result<()> {
-    let skills_dir = match skills_dir.or_else(default_skills_dir) {
-        Some(dir) => dir,
-        None => anyhow::bail!(
-            "Couldn't resolve a skills directory. Pass one with `tt skill install --dir <path>`."
-        ),
-    };
+/// What the caller asked `install` to write, and where.
+pub struct Request {
+    /// A directory named outright, which overrides every agent rule.
+    pub dir: Option<PathBuf>,
+    /// `--agent`, empty for "whichever agents are installed".
+    pub agents: Vec<String>,
+    /// `--all`: every known agent, detected or not.
+    pub all: bool,
+    /// Whether to wire Claude Code's hooks as well.
+    pub hooks: bool,
+}
 
-    let dest = write_skill_files(&skills_dir)?;
-    println!("Installed the {SKILL_NAME} skill into {}.", dest.display());
-
-    if hooks {
-        install_claude_hooks(&dest);
-    } else {
-        println!("Skipped the Claude Code hooks (--no-hooks).");
-    }
-
+/// Prints the detected agents, and the directory each would be served from.
+pub fn list_targets() -> Result<()> {
+    let home = paths::home_dir().context("Couldn't resolve your home directory")?;
     println!(
-        "\nFor an agent that reads its skills from somewhere else, install there too:\n  \
-         tt skill install --dir <that agent's skills directory>\n  \
-         npx skills add {SKILL_SLUG}"
+        "{:<10}{:<16}{:<22}STATUS",
+        "AGENT", "NAME", "SKILLS DIRECTORY"
+    );
+    for target in TARGETS {
+        println!(
+            "{:<10}{:<16}{:<22}{}",
+            target.name,
+            target.label,
+            format!("~/{}", target.skills_dir),
+            if is_detected(target, &home) {
+                "installed"
+            } else {
+                "not found"
+            }
+        );
+    }
+    println!(
+        "\n\"installed\" means ~/{{{}}} exists. `tt skill install` writes to those; \
+         `--all` writes to every row.",
+        TARGETS
+            .iter()
+            .map(|target| target.probe)
+            .collect::<Vec<_>>()
+            .join(",")
     );
     Ok(())
 }
+
+/// Installs the skill for the requested agents, and Claude Code's hooks with it.
+pub fn install(request: Request) -> Result<()> {
+    // An explicit directory answers the question by itself: no detection, and
+    // no assumption about which agent reads it.
+    if let Some(dir) = request.dir.clone().or_else(explicit_dir_from_env) {
+        let dest = write_skill_files(&dir)?;
+        println!("Installed the {SKILL_NAME} skill into {}.", dest.display());
+        if request.hooks {
+            install_claude_hooks(&dest);
+        }
+        print_other_agents_hint();
+        return Ok(());
+    }
+
+    let home = paths::home_dir().context(
+        "Couldn't resolve your home directory. Pass a directory with \
+         `tt skill install --dir <path>`.",
+    )?;
+
+    let targets = chosen_targets(&request, &home)?;
+    let mut claude_skill_dir = None;
+
+    for destination in destinations(&targets, &home) {
+        let dest = write_skill_files(&destination.dir)?;
+        println!(
+            "Installed the {SKILL_NAME} skill into {} — for {}.",
+            dest.display(),
+            destination.labels.join(", ")
+        );
+        if destination.labels.contains(&"Claude Code") {
+            claude_skill_dir = Some(dest);
+        }
+    }
+
+    // Only Claude Code has hooks. The other agents read the contract on their
+    // own, with no enforcement layer for `tt` to install.
+    match (request.hooks, claude_skill_dir) {
+        (true, Some(dir)) => install_claude_hooks(&dir),
+        (true, None) => println!("\nNo Claude Code install selected, so no hooks were wired."),
+        (false, _) => println!("\nSkipped the Claude Code hooks (--no-hooks)."),
+    }
+
+    print_other_agents_hint();
+    Ok(())
+}
+
+/// `TT_SKILL_DIR`, which pins the install the way `--dir` does.
+fn explicit_dir_from_env() -> Option<PathBuf> {
+    paths::env_or(std::env::var_os("TT_SKILL_DIR"), None)
+}
+
+/// The rows to install for: the named ones, every one, or the installed ones.
+fn chosen_targets(request: &Request, home: &Path) -> Result<Vec<&'static Target>> {
+    if !request.agents.is_empty() {
+        return request
+            .agents
+            .iter()
+            .map(|name| {
+                target_named(name).with_context(|| {
+                    format!(
+                        "Unknown agent \"{name}\". Known agents: {}.",
+                        TARGETS
+                            .iter()
+                            .map(|target| target.name)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })
+            })
+            .collect();
+    }
+
+    if request.all {
+        return Ok(TARGETS.iter().collect());
+    }
+
+    let detected: Vec<_> = TARGETS
+        .iter()
+        .filter(|target| is_detected(target, home))
+        .collect();
+    if !detected.is_empty() {
+        return Ok(detected);
+    }
+
+    // A machine where no agent has run yet still gets a usable install, at the
+    // path the hooks below expect. Silence here would read as a failure.
+    println!(
+        "No agent directory found under {} — installing for Claude Code anyway.\n",
+        home.display()
+    );
+    Ok(TARGETS
+        .iter()
+        .filter(|target| target.name == "claude")
+        .collect())
+}
+
+fn print_other_agents_hint() {
+    println!(
+        "\nFor an agent this doesn't know, name its skills directory:\n  \
+         tt skill install --dir <that agent's skills directory>\n  \
+         npx skills add {SKILL_SLUG}\n\
+         \n`tt skill targets` lists the agents it does know."
+    );
+}
+
+#[cfg(test)]
+mod tests;
