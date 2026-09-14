@@ -81,6 +81,11 @@ impl Case {
         self.run_full(&argv, true, env)
     }
 
+    /// Run `tt <args>` verbatim, for the commands that are not `tt agent`.
+    pub fn run_raw(&self, args: &[&str], env: &[(&str, &str)]) -> Run {
+        self.run_full(args, true, env)
+    }
+
     fn run_with(&self, args: &[&str], mark_dir: bool) -> Run {
         self.run_full(args, mark_dir, &[])
     }

@@ -14,6 +14,7 @@ mod icons;
 mod marks;
 mod paths;
 mod report;
+mod skill;
 mod storage;
 mod time;
 mod tracker;
@@ -112,6 +113,9 @@ fn main() -> Result<()> {
         Commands::Active => commands::active(),
         Commands::Agent { command } => agent::run(&command),
         Commands::Update { check, yes } => commands::update(check, yes),
+        Commands::Skill { command } => match command {
+            cli::SkillCommands::Install { dir, no_hooks } => skill::install(dir, !no_hooks),
+        },
         Commands::Completions { shell } => commands::completions(shell.as_deref()),
     }
 }
@@ -124,7 +128,10 @@ fn main() -> Result<()> {
 /// Exhaustive on purpose: a new variant must decide.
 fn needs_store_preamble(command: &Commands) -> bool {
     match command {
-        Commands::Report { .. } | Commands::Update { .. } | Commands::Completions { .. } => false,
+        Commands::Report { .. }
+        | Commands::Update { .. }
+        | Commands::Skill { .. }
+        | Commands::Completions { .. } => false,
         Commands::Agent { command } => command.touches_store(),
         Commands::Start { .. }
         | Commands::Stop

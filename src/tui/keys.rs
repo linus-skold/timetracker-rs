@@ -2,7 +2,6 @@
 //! `run_tui` only reads events, this decides what they mean.
 
 use super::App;
-use super::npx_available;
 use super::{ConfirmAction, InputMode, OnboardingStep, Pane, ViewMode};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -119,17 +118,10 @@ fn onboarding(app: &mut App, key: KeyEvent) -> Result<()> {
             _ => {}
         },
         OnboardingStep::Skill => match key.code {
+            // The skill ships inside this binary, so there is nothing to check
+            // for first — the install cannot fail on a missing tool.
             KeyCode::Char('y') => {
-                if npx_available() {
-                    app.onboarding_skill_error = None;
-                    app.request_skill_install = true;
-                } else {
-                    app.onboarding_skill_error = Some(
-                        "npx not found on PATH — install Node.js, or run \
-                                             this later yourself; see AGENTS.md."
-                            .to_string(),
-                    );
-                }
+                app.request_skill_install = true;
             }
             KeyCode::Char('n') | KeyCode::Enter => app.onboarding_finish()?,
             KeyCode::Esc => app.onboarding_skip()?,

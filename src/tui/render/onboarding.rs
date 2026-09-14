@@ -1,4 +1,4 @@
-use super::overlay::{overlay_hints, render_overlay, wrap};
+use super::overlay::{overlay_hints, render_overlay};
 use crate::tui::types::{LayoutSurface, OnboardingStep};
 use crate::tui::{App, theme};
 use ratatui::{prelude::*, widgets::Paragraph};
@@ -8,7 +8,7 @@ use ratatui::{prelude::*, widgets::Paragraph};
 pub(super) fn render_onboarding_popup(f: &mut Frame, app: &App) {
     match app.onboarding_step {
         OnboardingStep::Layout => render_onboarding_layout_step(f, app),
-        OnboardingStep::Skill => render_onboarding_skill_step(f, app),
+        OnboardingStep::Skill => render_onboarding_skill_step(f),
     }
 }
 
@@ -118,8 +118,8 @@ fn render_onboarding_layout_step(f: &mut Frame, app: &App) {
 }
 
 /// Offers to install the `AGENTS.md` time-logging contract as a skill.
-/// `y` hands the terminal to the child process; `n`/`Enter` moves on.
-fn render_onboarding_skill_step(f: &mut Frame, app: &App) {
+/// `y` installs it from this binary; `n`/`Enter` moves on.
+fn render_onboarding_skill_step(f: &mut Frame) {
     let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
             format!("  {} One last thing.", crate::icons::agent()),
@@ -143,29 +143,13 @@ fn render_onboarding_skill_step(f: &mut Frame, app: &App) {
             Span::styled("    ", Style::default()),
             Span::styled("$ ", Style::default().fg(theme::border())),
             Span::styled(
-                "npx skills add linus-skold/timetracker-rs",
+                "tt skill install",
                 Style::default().fg(theme::accent()).bold(),
             ),
         ]),
         Line::from(Span::raw("")),
     ];
 
-    // `y`'s existence check failed last attempt: say so in place, rather than
-    // suspending the terminal to run a command already known to be missing.
-    if let Some(error) = &app.onboarding_skill_error {
-        lines.push(Line::from(Span::styled(
-            format!("  {} ", crate::icons::warning()),
-            Style::default(),
-        )));
-        for (i, line) in wrap(error, 46).into_iter().enumerate() {
-            let prefix = if i == 0 { "  " } else { "    " };
-            lines.push(Line::from(Span::styled(
-                format!("{prefix}{line}"),
-                Style::default().fg(theme::theme().duration_high),
-            )));
-        }
-        lines.push(Line::from(Span::raw("")));
-    }
     lines.push(step_dots(1, 2));
 
     let content = render_overlay(

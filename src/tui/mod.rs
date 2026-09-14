@@ -125,9 +125,6 @@ pub(crate) struct App {
     /// One-shot: the run loop is what can suspend the terminal to run a
     /// child process, so onboarding just requests it here.
     pub(crate) request_skill_install: bool,
-    /// Set when `y` was pressed but `npx` is not on `PATH`, so the popup can
-    /// say so in place instead of suspending for a command sure to fail.
-    pub(crate) onboarding_skill_error: Option<String>,
     /// A newer version than this build, if `main` found one before the TUI
     /// took the terminal over. Shown as a banner, never blocking.
     pub(crate) update_notice: Option<String>,
@@ -217,7 +214,6 @@ impl App {
                 layout.show_tags.unwrap_or(true),
             ],
             request_skill_install: false,
-            onboarding_skill_error: None,
             update_notice: None,
         };
         // The first tick is 250 ms away, so read now for a current first frame.
@@ -266,74 +262,6 @@ impl App {
     pub(crate) fn set_data(&mut self, data: TimeData) {
         self.data = data;
         self.data_revision = self.data_revision.wrapping_add(1);
-    }
-}
-
-/// `npx` on Windows is a `.cmd` shim, not a directly-executable binary.
-#[cfg(windows)]
-fn npx_command() -> &'static str {
-    "npx.cmd"
-}
-
-#[cfg(not(windows))]
-fn npx_command() -> &'static str {
-    "npx"
-}
-
-/// A cheap existence check, so a missing `npx` is reported in place rather
-/// than by suspending the terminal for a command certain to fail.
-fn npx_available() -> bool {
-    std::process::Command::new(npx_command())
-        .arg("--version")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
-/// `npx skills add` may have landed the skill in the current project's
-/// `.claude/skills/` or in the user's global `~/.claude/skills/` — it
-/// prompts for that interactively, so we check both rather than assume.
-fn find_tt_skill_install_hooks() -> Option<std::path::PathBuf> {
-    let rel = std::path::Path::new(".claude/skills/tt-time-logging/scripts/install-hooks.mjs");
-    if rel.is_file() {
-        return Some(rel.to_path_buf());
-    }
-    let home = dirs_home()?;
-    let global = home.join(".claude/skills/tt-time-logging/scripts/install-hooks.mjs");
-    global.is_file().then_some(global)
-}
-
-#[cfg(windows)]
-fn dirs_home() -> Option<std::path::PathBuf> {
-    std::env::var_os("USERPROFILE").map(std::path::PathBuf::from)
-}
-
-#[cfg(not(windows))]
-fn dirs_home() -> Option<std::path::PathBuf> {
-    std::env::var_os("HOME").map(std::path::PathBuf::from)
-}
-
-/// Runs the skill's own hook installer against wherever `npx skills add`
-/// put it, so onboarding wires `SessionStart`/`Stop` enforcement without a
-/// separate manual step. Best-effort: prints what happened and never fails
-/// onboarding over it.
-fn run_tt_skill_install_hooks() {
-    match find_tt_skill_install_hooks() {
-        Some(script) => {
-            println!("\nRunning `node {}`...\n", script.display());
-            match std::process::Command::new("node").arg(&script).status() {
-                Ok(status) if status.success() => println!("\nHooks installed."),
-                Ok(status) => println!("\ninstall-hooks.mjs exited with {status}."),
-                Err(e) => println!("\nCouldn't run node: {e}."),
-            }
-        }
-        None => println!(
-            "\ntt-time-logging skill installed, but install-hooks.mjs wasn't found under \
-             .claude/skills/ or ~/.claude/skills/ — enforcement hooks were not set up. \
-             See the skill's README.md to run it manually."
-        ),
     }
 }
 
@@ -392,17 +320,9 @@ pub fn run_tui(update_notice: Option<String>) -> Result<()> {
         if app.request_skill_install {
             app.request_skill_install = false;
             with_suspended_terminal(&mut terminal, || {
-                println!("Running `npx skills add linus-skold/timetracker-rs`...\n");
-                let status = std::process::Command::new(npx_command())
-                    .args(["skills", "add", "linus-skold/timetracker-rs"])
-                    .status();
-                match status {
-                    Ok(status) if status.success() => {
-                        println!("\nDone.");
-                        run_tt_skill_install_hooks();
-                    }
-                    Ok(status) => println!("\n`npx` exited with {status}."),
-                    Err(e) => println!("\nCouldn't run npx: {e}"),
+                // Best-effort: a failed install must not take onboarding down.
+                if let Err(error) = crate::skill::install(None, true) {
+                    println!("Couldn't install the skill: {error}");
                 }
                 println!("Press Enter to return to tt...");
                 let mut discard = String::new();
