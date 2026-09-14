@@ -157,6 +157,24 @@ setting `TT_SKIP_UPDATE_CHECK=1`. It's also skipped automatically whenever a
 If you installed the Flatpak build, update with `flatpak update` instead —
 `tt update` won't try to replace a binary it can't write to.
 
+### `tt skill install [--dir <path>] [--no-hooks]`
+
+Install the `tt-time-logging` agent skill, and Claude Code's hooks for it.
+
+```sh
+tt skill install                       # ~/.claude/skills, plus the hooks
+tt skill install --no-hooks            # the skill only
+tt skill install --dir <skills dir>    # another agent's skills directory
+```
+
+The skill files are built into the binary, so this needs no network and no
+`npx`. Run it again to update: it overwrites the files it owns, so upgrade
+`tt` first. `TT_SKILL_DIR` sets the default target directory.
+
+The hooks half needs Node.js on your `PATH`, and is skipped when there is no
+`~/.claude`. See [the readme](../readme.md#the-agent-skill) for what each hook
+does, and for how to remove them.
+
 ### `tt completions [shell]`
 
 Print the shell completion hook for `bash`, `zsh`, `fish`, `powershell`,
@@ -359,10 +377,9 @@ auto_check_updates = true  # startup check for a newer release; see `tt update`
 the TUI runs and its onboarding popup is answered (`s` to move on, `Esc` to
 skip); `[layout]` is rewritten on every later `P`/`A`/`S`/`T`/`v`/`f` toggle too, which
 leaves `onboarding` alone. Neither needs to be hand-edited, though both can be.
-Onboarding's
-second screen offers to run `npx skills add linus-skold/timetracker-rs`,
-installing the `AGENTS.md` time-logging contract as a skill for whatever
-coding agent you use.
+Onboarding's second screen offers to run
+[`tt skill install`](#tt-skill-install---dir-path---no-hooks), which installs
+the `AGENTS.md` time-logging contract as a skill for your coding agent.
 
 The popup shows once, then the app sets `onboarding = false` so it stays
 quiet. Set it back to `true` (or delete the key) to see it again.
