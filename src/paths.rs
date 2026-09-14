@@ -28,6 +28,15 @@ pub fn data_dir() -> Option<PathBuf> {
     project_dirs().map(|dirs| dirs.data_dir().to_path_buf())
 }
 
+/// The user's home directory.
+///
+/// `~/.claude` and the agent skills directories under it belong to other tools,
+/// not to this app, so they do not come from `project_dirs`.
+pub fn home_dir() -> Option<PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var).map(PathBuf::from)
+}
+
 /// The rule every `TT_*` path override follows: the variable when it is set and
 /// non-empty, else `default`.
 ///
