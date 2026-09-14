@@ -194,11 +194,11 @@ its last row read `[abandoned]`, and the session then stops widening with every
 audit. It reports no row at all while a mark opened alongside it covers that
 whole bound; `[stale]` in `tt agent list` is the only nudge left in that case.
 
-**An existing install must re-run `install-hooks.mjs`.** The hook scripts are
-copied into Claude Code's own hooks directory, so a machine still holding the
-old copies gets no automatic beat at all, and every mark then expires on the
-unvouched grace. Until it is re-run the per-prompt card also carries no session
-id, so nothing can pass `--session`.
+**An existing install must re-run `tt skill install`** (or `install-hooks.mjs`
+directly). The hook scripts are copied into Claude Code's own hooks directory,
+so a machine still holding the old copies gets no automatic beat at all, and
+every mark then expires on the unvouched grace. Until it is re-run the
+per-prompt card also carries no session id, so nothing can pass `--session`.
 
 ## Working in parallel
 

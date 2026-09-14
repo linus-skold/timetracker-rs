@@ -16,11 +16,23 @@ cargo install --git https://github.com/linus-skold/timetracker-rs
 Shell completion for `tt` is one line in your shell startup file,
 `eval "$(tt completions <shell>)"` — see the readme's Quick start.
 
+## Installing
+
+`tt` carries this skill inside the binary, so the one command installs both the
+skill and the Claude Code hooks — no network, no `npx`:
+
+```sh
+tt skill install
+```
+
+Run it again to update. The rest of this file describes what the hooks half of
+that command does, and how to run it by hand.
+
 ## Enforcing this in Claude Code
 
 `npx skills add` is tool-agnostic — it only copies this directory into place; it
 knows nothing about Claude Code hooks, and prose alone gets skipped under context
-pressure. If you're using Claude Code, run this once after installing to wire in
+pressure. If you installed with it, run this once afterwards to wire in
 real enforcement (a `SessionStart` hook that injects the full contract once per
 session, a `UserPromptSubmit` hook that re-injects the short operating card on
 every prompt so the discipline survives context getting pushed out in a long
@@ -32,6 +44,9 @@ expire):
 ```sh
 node <wherever the skill landed>/scripts/install-hooks.mjs
 ```
+
+`tt skill install` runs exactly this script for you, against the copy it just
+wrote.
 
 This writes to your **global** `~/.claude/settings.json`, not a project-local
 one — the hooks are meant to fire in every session, in every project, not just
