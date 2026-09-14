@@ -134,3 +134,38 @@ if "$INSTALL_DIR/$bin_name" completions --help >/dev/null 2>&1; then
 fi
 
 "$INSTALL_DIR/$bin_name" --version || true
+
+# The agent skill and Claude Code's hooks for it. `tt` carries the skill files
+# itself, so this needs no network and no `npx skills`.
+#
+# Set TT_INSTALL_SKILL=1 to install without being asked, or 0 to skip. Piped
+# from curl our stdin is the script, so the prompt reads /dev/tty; where there
+# is no terminal the hint below stands in for it.
+skill_wanted() {
+  case "${TT_INSTALL_SKILL:-}" in
+    0 | n | no) return 1 ;;
+    1 | y | yes) return 0 ;;
+  esac
+  [ -r /dev/tty ] || return 1
+  printf '\nInstall the tt-time-logging agent skill, and Claude Code hooks for it? [Y/n] '
+  read -r reply < /dev/tty || return 1
+  case "$reply" in
+    [Nn]*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# A release older than the subcommand would fail with clap's usage error, which
+# reads like a broken install rather than an old one.
+if ! "$INSTALL_DIR/$bin_name" skill install --help >/dev/null 2>&1; then
+  echo
+  echo "This tt is older than \`tt skill install\`. Upgrade with \`tt update\`,"
+  echo "then run \`tt skill install\` to set up the agent skill."
+elif skill_wanted; then
+  echo
+  "$INSTALL_DIR/$bin_name" skill install || true
+else
+  echo
+  echo "To teach your coding agent the tt workflow later, run:"
+  echo "  tt skill install"
+fi

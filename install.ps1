@@ -51,3 +51,38 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 & $dest --version
+
+# The agent skill and Claude Code's hooks for it. `tt` carries the skill files
+# itself, so this needs no network and no `npx skills`.
+#
+# Set $env:TT_INSTALL_SKILL to 1 to install without being asked, or 0 to skip.
+function Test-SkillWanted {
+    switch ($env:TT_INSTALL_SKILL) {
+        { $_ -in @("0", "n", "no") } { return $false }
+        { $_ -in @("1", "y", "yes") } { return $true }
+    }
+    if (-not [Environment]::UserInteractive) { return $false }
+    $reply = Read-Host "`nInstall the tt-time-logging agent skill, and Claude Code hooks for it? [Y/n]"
+    return $reply -notmatch '^\s*[Nn]'
+}
+
+# A release older than the subcommand would fail with clap's usage error, which
+# reads like a broken install rather than an old one.
+$ErrorActionPreference = "Continue"
+& $dest skill install --help *> $null
+$understandsSkill = $LASTEXITCODE -eq 0
+# Left on Continue on purpose: a non-zero exit from the install below is
+# reported, not turned into a terminating error on the way out.
+
+if (-not $understandsSkill) {
+    Write-Host ""
+    Write-Host "This tt is older than ``tt skill install``. Upgrade with ``tt update``,"
+    Write-Host "then run ``tt skill install`` to set up the agent skill."
+} elseif (Test-SkillWanted) {
+    Write-Host ""
+    & $dest skill install
+} else {
+    Write-Host ""
+    Write-Host "To teach your coding agent the tt workflow later, run:"
+    Write-Host "  tt skill install"
+}
