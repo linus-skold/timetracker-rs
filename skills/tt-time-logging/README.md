@@ -25,8 +25,10 @@ skill and the Claude Code hooks — no network, no `npx`:
 tt skill install
 ```
 
-Run it again to update. The rest of this file describes what the hooks half of
-that command does, and how to run it by hand.
+It installs for every agent it finds — Claude Code, Codex CLI, GitHub Copilot
+and Gemini CLI — and `tt skill targets` lists them. Run it again to update. The
+rest of this file describes what the hooks half of that command does, and how to
+run it by hand.
 
 ## Enforcing this in Claude Code
 

@@ -157,23 +157,44 @@ setting `TT_SKIP_UPDATE_CHECK=1`. It's also skipped automatically whenever a
 If you installed the Flatpak build, update with `flatpak update` instead —
 `tt update` won't try to replace a binary it can't write to.
 
-### `tt skill install [--dir <path>] [--no-hooks]`
+### `tt skill install [--agent <name>]... [--all] [--dir <path>] [--no-hooks]`
 
 Install the `tt-time-logging` agent skill, and Claude Code's hooks for it.
 
 ```sh
-tt skill install                       # ~/.claude/skills, plus the hooks
+tt skill install                       # every agent found on this machine
+tt skill install --agent copilot       # a named agent, repeatable
+tt skill install --all                 # every agent it knows
 tt skill install --no-hooks            # the skill only
-tt skill install --dir <skills dir>    # another agent's skills directory
+tt skill install --dir <skills dir>    # a directory, for an agent it doesn't know
 ```
+
+Known agents are `claude`, `codex`, `copilot` and `gemini`. An agent counts as
+installed when its own directory (`~/.claude`, `~/.codex`, `~/.copilot`,
+`~/.gemini`) exists. Codex, Copilot and Gemini all read `~/.agents/skills`, so
+they share one copy. With no agent on the machine, the install falls back to
+Claude Code's directory.
 
 The skill files are built into the binary, so this needs no network and no
 `npx`. Run it again to update: it overwrites the files it owns, so upgrade
-`tt` first. `TT_SKILL_DIR` sets the default target directory.
+`tt` first. `TT_SKILL_DIR` pins the install to one directory, as `--dir` does.
 
 The hooks half needs Node.js on your `PATH`, and is skipped when there is no
 `~/.claude`. See [the readme](../readme.md#the-agent-skill) for what each hook
 does, and for how to remove them.
+
+### `tt skill targets`
+
+List the agents `tt skill install` knows, the directory each is served from,
+and which of them are on this machine.
+
+```
+AGENT     NAME            SKILLS DIRECTORY      STATUS
+claude    Claude Code     ~/.claude/skills      installed
+codex     Codex CLI       ~/.agents/skills      not found
+copilot   GitHub Copilot  ~/.agents/skills      not found
+gemini    Gemini CLI      ~/.agents/skills      installed
+```
 
 ### `tt completions [shell]`
 
@@ -378,7 +399,7 @@ the TUI runs and its onboarding popup is answered (`s` to move on, `Esc` to
 skip); `[layout]` is rewritten on every later `P`/`A`/`S`/`T`/`v`/`f` toggle too, which
 leaves `onboarding` alone. Neither needs to be hand-edited, though both can be.
 Onboarding's second screen offers to run
-[`tt skill install`](#tt-skill-install---dir-path---no-hooks), which installs
+[`tt skill install`](#tt-skill-install---agent-name---all---dir-path---no-hooks), which installs
 the `AGENTS.md` time-logging contract as a skill for your coding agent.
 
 The popup shows once, then the app sets `onboarding = false` so it stays

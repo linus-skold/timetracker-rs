@@ -55,9 +55,9 @@ it yourself:
 tt skill install
 ```
 
-That writes the skill into `~/.claude/skills/tt-time-logging`, then installs
-Claude Code's hooks for it (see below). The skill files are built into the
-binary, so the command needs no network and no `npx`.
+That installs for every agent it finds on your machine, and then wires Claude
+Code's hooks (see below). The skill files are built into the binary, so the
+command needs no network and no `npx`.
 
 **To update the skill, run the same command again.** It overwrites the files it
 owns with the copies your current `tt` was built with, so upgrade `tt` first:
@@ -67,22 +67,51 @@ tt update
 tt skill install
 ```
 
-**Other agents.** Give `--dir` the skills directory your agent reads, or set
-`TT_SKILL_DIR`:
+### Which agents
+
+| Agent | Skills directory | Installed when |
+|---|---|---|
+| Claude Code | `~/.claude/skills` | `~/.claude` exists |
+| Codex CLI | `~/.agents/skills` | `~/.codex` exists |
+| GitHub Copilot | `~/.agents/skills` | `~/.copilot` exists |
+| Gemini CLI | `~/.agents/skills` | `~/.gemini` exists |
+
+All four read the same `SKILL.md` layout. Codex, Copilot and Gemini each
+document `~/.agents/skills` as the shared, tool-agnostic location, so one copy
+there serves all three.
+
+```sh
+tt skill targets                    # what it knows, and what is on this machine
+tt skill install                    # every agent found
+tt skill install --agent copilot    # a named agent, found or not
+tt skill install --all              # every agent it knows
+```
+
+`tt skill install` creates nothing for an agent you do not have. With no agent
+at all on the machine it falls back to Claude Code's directory.
+
+### Another agent
+
+Give `--dir` the skills directory your agent reads, or set `TT_SKILL_DIR`:
 
 ```sh
 tt skill install --dir ~/.config/<your agent>/skills
 ```
 
-The skill is also published for the tool-agnostic `skills` CLI, which installs
-it for several agents at once:
+The skill is also published for the tool-agnostic `skills` CLI:
 
 ```sh
 npx skills add linus-skold/timetracker-rs
 ```
 
-Both routes place the same files. `npx skills add` installs no hooks, so run
+Every route places the same files. `npx skills add` installs no hooks, so run
 `tt skill install` afterwards if you use Claude Code.
+
+**To add an agent to the table**, add a row to `TARGETS` in
+[src/skill.rs](src/skill.rs) — a name, a label, its skills directory, and a
+home-relative directory that proves the agent is installed — then a row in the
+table above and a case in `src/skill/tests.rs`. No installer code is needed
+while the agent reads `SKILL.md`. Pull requests welcome.
 
 ### Claude Code hooks
 
