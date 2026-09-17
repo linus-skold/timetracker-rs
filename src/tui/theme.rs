@@ -25,6 +25,11 @@ pub struct Theme {
     /// Background of modal popups.
     pub overlay_bg: Color,
 
+    /// The "no time tracked" cell in the yearly overview heatmap.
+    pub heatmap_empty: Color,
+    /// Green ramp, lightest to most saturated, for the yearly overview heatmap.
+    pub heatmap_levels: [Color; 4],
+
     /// Thresholds (in hours) for coloring a single time entry's duration.
     pub entry_duration_high_h: i64,
     pub entry_duration_med_h: i64,
@@ -60,6 +65,14 @@ impl Theme {
             member_bg: color(&cfg.member_bg, (32, 28, 44)),             // Dark purple
             day_header_bg: color(&cfg.day_header_bg, (38, 48, 68)),     // Dark blue
             overlay_bg: color(&cfg.overlay_bg, (28, 28, 28)),           // Near-black
+
+            heatmap_empty: color(&cfg.heatmap_empty, (45, 45, 45)),
+            heatmap_levels: [
+                color(&cfg.heatmap_level1, (155, 233, 168)),
+                color(&cfg.heatmap_level2, (64, 196, 99)),
+                color(&cfg.heatmap_level3, (48, 161, 78)),
+                color(&cfg.heatmap_level4, (33, 110, 57)),
+            ],
 
             entry_duration_high_h: dur.entry_high_hours.unwrap_or(4),
             entry_duration_med_h: dur.entry_med_hours.unwrap_or(2),
@@ -127,38 +140,44 @@ pub fn duration_color(hours: i64, high_threshold: i64, med_threshold: i64) -> Co
     }
 }
 
-/// Not user-configurable: the "no time tracked" cell in the yearly overview
-/// heatmap.
-pub const HEATMAP_EMPTY: Color = Color::Rgb(45, 45, 45);
-
-/// Not user-configurable: a GitHub-style green ramp, lightest to most
-/// saturated, for the yearly overview heatmap. Deliberately independent of
-/// the app's red/amber/green "duration warning" palette used elsewhere
-/// (`duration_color`) — this pane reads as a contribution graph, not a
-/// warning about long days.
-const HEATMAP_LEVELS: [Color; 4] = [
-    Color::Rgb(155, 233, 168),
-    Color::Rgb(64, 196, 99),
-    Color::Rgb(48, 161, 78),
-    Color::Rgb(33, 110, 57),
-];
-
 /// Maps a day's tracked hours to one of five progressively more intense
 /// greens, for the yearly overview heatmap. Reuses the day-duration
 /// thresholds (so a heatmap cell and a weekly-breakdown row agree on what
-/// counts as a light/heavy day) but not their colors.
+/// counts as a light/heavy day) but not their colors, which are independent
+/// of the app's red/amber/green "duration warning" palette used elsewhere
+/// (`duration_color`) — this pane reads as a contribution graph, not a
+/// warning about long days.
 pub fn heat_color(hours: i64) -> Color {
     let t = theme();
     if hours <= 0 {
-        HEATMAP_EMPTY
+        t.heatmap_empty
     } else if hours < t.day_duration_med_h / 2 {
-        HEATMAP_LEVELS[0]
+        t.heatmap_levels[0]
     } else if hours < t.day_duration_med_h {
-        HEATMAP_LEVELS[1]
+        t.heatmap_levels[1]
     } else if hours < t.day_duration_high_h {
-        HEATMAP_LEVELS[2]
+        t.heatmap_levels[2]
     } else {
-        HEATMAP_LEVELS[3]
+        t.heatmap_levels[3]
+    }
+}
+
+/// Maps `part` onto the same ramp by its proportion of `max`, in quarters, for
+/// grids whose buckets are too small for [`heat_color`]'s day thresholds. Any
+/// unit, as long as both arguments share it. A part or a maximum at or below
+/// zero is empty, so an empty grid cannot divide by zero.
+pub fn heat_shade(part: i64, max: i64) -> Color {
+    let t = theme();
+    if part <= 0 || max <= 0 {
+        t.heatmap_empty
+    } else if part * 4 <= max {
+        t.heatmap_levels[0]
+    } else if part * 2 <= max {
+        t.heatmap_levels[1]
+    } else if part * 4 <= max * 3 {
+        t.heatmap_levels[2]
+    } else {
+        t.heatmap_levels[3]
     }
 }
 
@@ -166,28 +185,70 @@ pub fn heat_color(hours: i64) -> Color {
 mod tests {
     use super::*;
 
+    /// Quarters of the maximum, each band closed at its top.
+    #[test]
+    fn heat_shade_bands_the_proportion_of_the_maximum() {
+        let t = theme();
+        assert_eq!(
+            heat_shade(25, 100),
+            t.heatmap_levels[0],
+            "the first quarter"
+        );
+        assert_eq!(heat_shade(26, 100), t.heatmap_levels[1]);
+        assert_eq!(
+            heat_shade(50, 100),
+            t.heatmap_levels[1],
+            "the second quarter"
+        );
+        assert_eq!(heat_shade(51, 100), t.heatmap_levels[2]);
+        assert_eq!(
+            heat_shade(75, 100),
+            t.heatmap_levels[2],
+            "the third quarter"
+        );
+        assert_eq!(heat_shade(76, 100), t.heatmap_levels[3]);
+        assert_eq!(heat_shade(100, 100), t.heatmap_levels[3], "the maximum");
+    }
+
+    /// A small part of a small maximum still reads hot: the scale is relative.
+    #[test]
+    fn heat_shade_rescales_to_whatever_the_maximum_is() {
+        let t = theme();
+        assert_eq!(heat_shade(1, 1), t.heatmap_levels[3]);
+        assert_eq!(heat_shade(1, 4), t.heatmap_levels[0]);
+    }
+
+    #[test]
+    fn heat_shade_treats_an_empty_bucket_or_an_empty_grid_as_empty() {
+        let t = theme();
+        assert_eq!(heat_shade(0, 100), t.heatmap_empty, "nothing in the bucket");
+        assert_eq!(heat_shade(-5, 100), t.heatmap_empty, "never below empty");
+        assert_eq!(heat_shade(10, 0), t.heatmap_empty, "no divide by zero");
+        assert_eq!(heat_shade(0, 0), t.heatmap_empty);
+    }
+
     #[test]
     fn heat_color_covers_each_threshold_boundary_with_progressively_greener_shades() {
         let t = theme();
-        assert_eq!(heat_color(0), HEATMAP_EMPTY, "no time tracked");
+        assert_eq!(heat_color(0), t.heatmap_empty, "no time tracked");
         assert_eq!(
             heat_color(1),
-            HEATMAP_LEVELS[0],
+            t.heatmap_levels[0],
             "well under the medium threshold"
         );
         assert_eq!(
             heat_color(t.day_duration_med_h - 1),
-            HEATMAP_LEVELS[1],
+            t.heatmap_levels[1],
             "just under the medium threshold"
         );
         assert_eq!(
             heat_color(t.day_duration_med_h),
-            HEATMAP_LEVELS[2],
+            t.heatmap_levels[2],
             "at the medium threshold"
         );
         assert_eq!(
             heat_color(t.day_duration_high_h),
-            HEATMAP_LEVELS[3],
+            t.heatmap_levels[3],
             "at the high threshold"
         );
     }

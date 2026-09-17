@@ -2,7 +2,7 @@ use super::App;
 use super::types::{ConfirmAction, InputMode, PendingConfirm, ViewMode};
 use crate::storage::PathStamp;
 use anyhow::Result;
-use chrono::{Datelike, Duration, Local, NaiveDate};
+use chrono::{Datelike, Duration, Local, Months, NaiveDate};
 use crossterm::event::KeyCode;
 use std::time::{Duration as StdDuration, Instant};
 
@@ -323,9 +323,11 @@ impl App {
             ViewMode::All => {}
             ViewMode::Day => self.selected_date += Duration::days(1),
             ViewMode::Week => self.selected_date += Duration::days(7),
-            ViewMode::Overview => self.selected_date = shift_year(self.selected_date, 1),
+            ViewMode::Month => self.selected_date = shift_months(self.selected_date, 1),
+            ViewMode::Year => self.selected_date = shift_year(self.selected_date, 1),
         }
         self.table_state.select(Some(0));
+        self.heat_scroll = 0;
     }
 
     pub(crate) fn previous_period(&mut self) {
@@ -333,19 +335,23 @@ impl App {
             ViewMode::All => {}
             ViewMode::Day => self.selected_date -= Duration::days(1),
             ViewMode::Week => self.selected_date -= Duration::days(7),
-            ViewMode::Overview => self.selected_date = shift_year(self.selected_date, -1),
+            ViewMode::Month => self.selected_date = shift_months(self.selected_date, -1),
+            ViewMode::Year => self.selected_date = shift_year(self.selected_date, -1),
         }
         self.table_state.select(Some(0));
+        self.heat_scroll = 0;
     }
 
     pub(crate) fn set_view_mode(&mut self, mode: ViewMode) {
         self.view_mode = mode;
         self.table_state.select(Some(0));
+        self.heat_scroll = 0;
     }
 
     pub(crate) fn go_to_today(&mut self) {
         self.selected_date = Local::now().date_naive();
         self.table_state.select(Some(0));
+        self.heat_scroll = 0;
     }
 
     pub(crate) fn toggle_sort_order(&mut self) {
@@ -356,6 +362,18 @@ impl App {
 
 /// `date` moved `delta` years, falling back to Feb 28 when `date` is a Feb 29
 /// that the target year does not have.
+/// One month either way. chrono clamps the day to the shorter month, so
+/// repeated stepping from a 31st settles on the clamped day.
+fn shift_months(date: NaiveDate, delta: i32) -> NaiveDate {
+    let months = Months::new(delta.unsigned_abs());
+    let shifted = if delta >= 0 {
+        date.checked_add_months(months)
+    } else {
+        date.checked_sub_months(months)
+    };
+    shifted.unwrap_or(date)
+}
+
 fn shift_year(date: NaiveDate, delta: i32) -> NaiveDate {
     let year = date.year() + delta;
     date.with_year(year)

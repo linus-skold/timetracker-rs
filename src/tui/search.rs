@@ -105,6 +105,7 @@ impl App {
         self.project_filter.clear();
         self.tag_filter.clear();
         self.table_state.select(Some(0));
+        self.heat_scroll = 0;
     }
 
     pub(crate) fn start_search(&mut self) {
@@ -116,16 +117,19 @@ impl App {
         self.search_term.clear();
         self.input_mode = InputMode::Normal;
         self.table_state.select(Some(0));
+        self.heat_scroll = 0;
     }
 
     pub(crate) fn handle_search_char(&mut self, c: char) {
         self.search_term.insert(c);
         self.table_state.select(Some(0));
+        self.heat_scroll = 0;
     }
 
     pub(crate) fn handle_search_backspace(&mut self) {
         self.search_term.backspace();
         self.table_state.select(Some(0));
+        self.heat_scroll = 0;
     }
 
     pub(crate) fn confirm_search(&mut self) {

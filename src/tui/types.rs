@@ -3,7 +3,8 @@ pub enum ViewMode {
     All,
     Day,
     Week,
-    Overview,
+    Month,
+    Year,
 }
 
 impl ViewMode {
@@ -12,7 +13,8 @@ impl ViewMode {
             ViewMode::All => "All Entries",
             ViewMode::Day => "Daily View",
             ViewMode::Week => "Weekly View",
-            ViewMode::Overview => "Overview",
+            ViewMode::Month => "Monthly View",
+            ViewMode::Year => "Yearly View",
         }
     }
 
@@ -22,7 +24,8 @@ impl ViewMode {
             ViewMode::All => "all",
             ViewMode::Day => "day",
             ViewMode::Week => "week",
-            ViewMode::Overview => "year",
+            ViewMode::Month => "month",
+            ViewMode::Year => "year",
         }
     }
 }

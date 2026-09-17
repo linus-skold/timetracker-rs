@@ -36,6 +36,9 @@ pub use types::{
     ViewMode,
 };
 
+/// The view every session opens on, and what `heat_view` defaults against.
+const START_VIEW: ViewMode = ViewMode::Day;
+
 pub(crate) struct App {
     /// The store snapshot. **Never assign this directly** — go through
     /// [`App::set_data`], which bumps `data_revision`.
@@ -112,6 +115,17 @@ pub(crate) struct App {
     pub(crate) summary_split: bool,
     /// Whether the Summary folds `filtered_entries()` instead of the scope.
     pub(crate) summary_follows_filters: bool,
+    /// Whether the content area draws a heatmap instead of the entry list.
+    /// One flag for every view, so switching view keeps the representation.
+    pub(crate) heat_view: bool,
+    /// Whether the Summary's project rows carry their per-project heat strips.
+    pub(crate) summary_heat: bool,
+    /// Rows or bands the heat grid is scrolled past. Session state: a view
+    /// change, a period step and `M` all reset it, and it is never persisted.
+    pub(crate) heat_scroll: usize,
+    /// How far `heat_scroll` may go, as the last frame worked it out. The
+    /// renderer owns the clamp; `j`/`k` only read the limit back.
+    pub(crate) heat_scroll_max: usize,
     /// What `Tab` has given focus to, and where each pane's cursor rests.
     pub(crate) focus: Focus,
     pub(crate) project_cursor: usize,
@@ -175,7 +189,7 @@ impl App {
             unaccounted: Vec::new(),
             table_state: TableState::default().with_selected(Some(0)),
             should_quit: false,
-            view_mode: ViewMode::Day,
+            view_mode: START_VIEW,
             selected_date: Local::now().date_naive(),
             input_mode: InputMode::Normal,
             help_scroll: 0,
@@ -200,6 +214,11 @@ impl App {
             show_summary: layout.show_summary.unwrap_or(false),
             summary_split: layout.summary_split.unwrap_or(false),
             summary_follows_filters: layout.summary_follows_filters.unwrap_or(false),
+            // Year is the only view whose own representation is the heatmap.
+            heat_view: layout.heat_view.unwrap_or(START_VIEW == ViewMode::Year),
+            summary_heat: layout.summary_heat.unwrap_or(false),
+            heat_scroll: 0,
+            heat_scroll_max: 0,
             focus: Focus::Table,
             project_cursor: 0,
             tag_cursor: 0,
@@ -236,7 +255,9 @@ impl App {
         Ok(result)
     }
 
-    /// Which surfaces are open right now, in config shape.
+    /// How the TUI stands right now — open surfaces and representations — in
+    /// config shape. **The single writer:** a field left out of this literal is
+    /// erased on the next [`persist_layout`](Self::persist_layout).
     pub(crate) fn layout_config(&self) -> crate::config::LayoutConfig {
         crate::config::LayoutConfig {
             show_projects: Some(self.show_projects),
@@ -245,6 +266,8 @@ impl App {
             show_tags: Some(self.show_tags),
             summary_split: Some(self.summary_split),
             summary_follows_filters: Some(self.summary_follows_filters),
+            heat_view: Some(self.heat_view),
+            summary_heat: Some(self.summary_heat),
         }
     }
 
@@ -1390,6 +1413,56 @@ mod tests {
         assert!(app.summary_follows_filters);
     }
 
+    /// The flag survives a write made for another key: the literal in
+    /// `layout_config` is the only writer, so a field left out is erased.
+    #[test]
+    fn toggling_the_heat_view_persists_it_and_survives_another_write() {
+        let _guard = env_guard();
+        sandbox("heat-view-persist");
+        seed(vec![entry(0, "first")], 1);
+
+        let mut app = App::new().unwrap();
+        assert!(!app.heat_view, "a Day session opens as a list");
+        app.toggle_heat_view();
+        assert_eq!(saved_layout()["heat_view"].as_bool(), Some(true));
+
+        app.toggle_summary_split();
+        assert_eq!(
+            saved_layout()["heat_view"].as_bool(),
+            Some(true),
+            "another layout write erased the heat view"
+        );
+    }
+
+    #[test]
+    fn toggling_the_summary_heat_persists_it_and_survives_another_write() {
+        let _guard = env_guard();
+        sandbox("summary-heat-persist");
+        seed(vec![entry(0, "first")], 1);
+
+        let mut app = App::new().unwrap();
+        assert!(!app.summary_heat, "the strips are opt-in");
+        app.toggle_summary_heat();
+        assert_eq!(saved_layout()["summary_heat"].as_bool(), Some(true));
+
+        app.toggle_summary_split();
+        assert_eq!(
+            saved_layout()["summary_heat"].as_bool(),
+            Some(true),
+            "another layout write erased the summary heat"
+        );
+    }
+
+    #[test]
+    fn the_layout_key_seeds_the_heat_view() {
+        let _guard = env_guard();
+        let dir = sandbox("heat-view-seed");
+        seed(vec![entry(0, "first")], 1);
+        std::fs::write(dir.join("config.toml"), "[layout]\nheat_view = true\n").unwrap();
+
+        assert!(App::new().unwrap().heat_view);
+    }
+
     #[test]
     fn liveness_is_read_at_most_once_per_interval_however_many_events_arrive() {
         let _guard = env_guard();
@@ -1935,7 +2008,7 @@ mod tests {
         app.input_mode = InputMode::Help;
 
         // The last row of the last section: only ever on the last page.
-        const LAST_ROW: &str = "follow the filters";
+        const LAST_ROW: &str = "summary heat strips";
         let top = frame_lines(&mut app, 100, 20).join("\n");
         assert!(top.contains("▾ more"), "{top}");
         assert!(top.contains("j/k scroll"), "{top}");
@@ -1948,7 +2021,7 @@ mod tests {
         assert!(app.help_scroll < 1000, "render clamps the offset");
 
         app.input_mode = InputMode::Help;
-        let tall = frame_lines(&mut app, 100, 45).join("\n");
+        let tall = frame_lines(&mut app, 100, 47).join("\n");
         assert!(
             !tall.contains("▾ more") && !tall.contains("j/k scroll"),
             "{tall}"
@@ -2140,13 +2213,13 @@ mod tests {
     }
 
     #[test]
-    fn overview_h_l_page_by_year_instead_of_by_day() {
+    fn the_year_view_pages_by_year_instead_of_by_day() {
         let _guard = env_guard();
-        sandbox("overview-year-paging");
+        sandbox("year-view-paging");
         seed(vec![], 0);
 
         let mut app = App::new().unwrap();
-        app.view_mode = ViewMode::Overview;
+        app.view_mode = ViewMode::Year;
         let start = app.selected_date;
 
         app.next_period();
@@ -2160,13 +2233,13 @@ mod tests {
     }
 
     #[test]
-    fn overview_leap_day_falls_back_to_feb_28_in_a_non_leap_year() {
+    fn the_year_view_leap_day_falls_back_to_feb_28_in_a_non_leap_year() {
         let _guard = env_guard();
-        sandbox("overview-year-paging-leap");
+        sandbox("year-view-paging-leap");
         seed(vec![], 0);
 
         let mut app = App::new().unwrap();
-        app.view_mode = ViewMode::Overview;
+        app.view_mode = ViewMode::Year;
         app.selected_date = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
 
         app.next_period();
@@ -3058,9 +3131,9 @@ mod tests {
     }
 
     #[test]
-    fn overview_renders_a_year_grid_with_labels_and_legend() {
+    fn the_year_view_renders_a_grid_with_labels_and_legend() {
         let _guard = env_guard();
-        sandbox("overview-render");
+        sandbox("year-view-render");
         seed(
             vec![
                 logged(
@@ -3092,12 +3165,16 @@ mod tests {
         );
 
         let mut app = App::new().unwrap();
-        app.view_mode = ViewMode::Overview;
+        app.heat_view = true;
+        app.view_mode = ViewMode::Year;
         app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
 
         let screen = frame_lines(&mut app, 140, 24).join("\n");
 
-        assert!(screen.contains("Overview"), "tab title shows the new view");
+        assert!(
+            screen.contains("Yearly View"),
+            "tab title shows the new view"
+        );
         assert!(
             screen.contains("Year 2026"),
             "date_info names the shown year"
@@ -3117,6 +3194,187 @@ mod tests {
         assert!(
             screen.contains("active day"),
             "the block title reports the active-day count:\n{screen}"
+        );
+    }
+
+    /// 2026 opens on a Thursday and closes on a Thursday, so its grid is 53
+    /// Monday-opened weeks wide.
+    const WEEKS_IN_2026: usize = 53;
+
+    /// The first inner column of the year grid: the block border and the
+    /// five-column year gutter.
+    const GRID_LEFT: u16 = 6;
+
+    fn year_view_2026() -> App {
+        seed(
+            vec![logged(
+                1,
+                "a",
+                "tt",
+                &["impl"],
+                NaiveDate::from_ymd_opt(2026, 6, 15).unwrap(),
+                300,
+            )],
+            2,
+        );
+        let mut app = App::new().unwrap();
+        app.heat_view = true;
+        app.view_mode = ViewMode::Year;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+        app
+    }
+
+    /// A wider window gives each week a fatter cell; it never invents weeks.
+    #[test]
+    fn a_wider_year_grid_widens_its_cells_rather_than_adding_weeks() {
+        let _guard = env_guard();
+        sandbox("year-view-width");
+        let mut app = year_view_2026();
+
+        // The Monday band opens in 2025, so its first cell is left unpainted
+        // and the gap before the painted ones is exactly one cell wide.
+        let band = |rows: Vec<Vec<(u16, ratatui::style::Color)>>| {
+            let painted = rows[0].len();
+            let cell_width = (rows[0][0].0 - GRID_LEFT) as usize;
+            (cell_width, painted / cell_width)
+        };
+        let (narrow_width, narrow_weeks) = band(heat_block_cells(&mut app, 140, 30).1);
+        let (wide_width, wide_weeks) = band(heat_block_cells(&mut app, 280, 30).1);
+
+        assert_eq!(narrow_width, 2, "138 inner columns over 53 weeks");
+        assert_eq!(wide_width, 5, "twice the width did not widen the cells");
+        assert_eq!(
+            narrow_weeks, wide_weeks,
+            "the wider grid grew weeks instead of cells"
+        );
+        assert_eq!(
+            narrow_weeks + 1,
+            WEEKS_IN_2026,
+            "the grid lost weeks it had room for"
+        );
+    }
+
+    /// A narrow window narrows the cells; the year keeps every week of its own.
+    #[test]
+    fn a_narrow_year_grid_keeps_every_week_of_the_year() {
+        let _guard = env_guard();
+        sandbox("year-view-narrow");
+        let mut app = year_view_2026();
+
+        // 58 inner columns less the gutter leave one each for 53 weeks; the
+        // Monday band opens in 2025, so one of its cells stays unpainted.
+        let (_, rows) = heat_block_cells(&mut app, 60, 30);
+        assert_eq!(rows[0].len(), WEEKS_IN_2026 - 1);
+    }
+
+    /// The grid takes the height it is given, and names each weekday once.
+    #[test]
+    fn a_taller_year_grid_grows_its_weekday_bands() {
+        let _guard = env_guard();
+        sandbox("year-view-height");
+        let mut app = year_view_2026();
+
+        let (_, short) = heat_block_cells(&mut app, 140, 20);
+        let (_, tall) = heat_block_cells(&mut app, 140, 40);
+        assert!(
+            tall.len() > short.len(),
+            "the bands did not grow: {} rows at both heights",
+            short.len()
+        );
+        for rows in [&short, &tall] {
+            assert_eq!(rows.len() % 7, 0, "the bands are uneven: {}", rows.len());
+        }
+
+        let screen = frame_lines(&mut app, 140, 40);
+        assert_eq!(
+            screen
+                .iter()
+                .filter(|line| line.starts_with("\u{2502} Mon "))
+                .count(),
+            1,
+            "the weekday label repeats down its band:\n{}",
+            screen.join("\n")
+        );
+    }
+
+    /// The Month block's tick line and its heat cells, one inner row per
+    /// vector, as `(x, colour)`. A cell is a blank symbol, so only the
+    /// background says where it is. The legend rides a border row, so any row
+    /// carrying a box corner or rule is left out.
+    fn heat_block_cells(
+        app: &mut App,
+        width: u16,
+        height: u16,
+    ) -> (String, Vec<Vec<(u16, ratatui::style::Color)>>) {
+        // One sample per step of the ramp: empty, then each level in turn.
+        let palette: Vec<ratatui::style::Color> = [0, 1, 3, 5, 9]
+            .into_iter()
+            .map(super::theme::heat_color)
+            .collect();
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| render::ui(f, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let row_text = |y: u16| {
+            (0..width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+        let rows: Vec<(u16, Vec<(u16, ratatui::style::Color)>)> = (0..height)
+            .filter(|y| !row_text(*y).contains(['\u{2500}', '\u{2514}', '\u{2518}']))
+            .map(|y| {
+                let cells: Vec<(u16, ratatui::style::Color)> = (0..width)
+                    .map(|x| (x, buffer[(x, y)].bg))
+                    .filter(|(_, bg)| palette.contains(bg))
+                    .collect();
+                (y, cells)
+            })
+            .filter(|(_, cells)| !cells.is_empty())
+            .collect();
+        let ticks = rows
+            .first()
+            .map(|(y, _)| row_text(y.saturating_sub(1)).trim_end().to_string())
+            .unwrap_or_default();
+        (ticks, rows.into_iter().map(|(_, cells)| cells).collect())
+    }
+
+    /// The tabs read in period order, shortest first, with `All` last.
+    #[test]
+    fn the_tabs_row_lists_the_five_views_in_period_order() {
+        let _guard = env_guard();
+        sandbox("tabs-period-order");
+        seed(vec![], 0);
+
+        let mut app = App::new().unwrap();
+        app.view_mode = ViewMode::Month;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        let screen = frame_lines(&mut app, 140, 24);
+        let tabs = screen
+            .iter()
+            .find(|line| line.contains("[1] Day"))
+            .unwrap_or_else(|| panic!("no tabs row:\n{}", screen.join("\n")))
+            .clone();
+
+        let order: Vec<usize> = ["[1] Day", "[2] Week", "[3] Month", "[4] Year", "[5] All"]
+            .iter()
+            .map(|tab| {
+                tabs.find(tab)
+                    .unwrap_or_else(|| panic!("no `{tab}` on the tabs row: {tabs}"))
+            })
+            .collect();
+        assert!(
+            order.windows(2).all(|pair| pair[0] < pair[1]),
+            "the tabs are out of period order: {tabs}"
+        );
+
+        let title = screen
+            .iter()
+            .find(|line| line.contains("Monthly View"))
+            .unwrap_or_else(|| panic!("no Month title:\n{}", screen.join("\n")));
+        assert!(
+            title.contains("June 2026"),
+            "the Month tab does not name its month: {title}"
         );
     }
 
@@ -3730,6 +3988,92 @@ mod tests {
         assert_eq!(summary(&app), "(no project)=0m/1/0% tt=0m/1/0%");
     }
 
+    /// Every bucket list rebuilds the total printed on its own row, in every
+    /// view, so a strip can never disagree with the row it sits on.
+    #[test]
+    fn project_buckets_sum_to_the_row_total_in_every_view() {
+        let _guard = env_guard();
+        sandbox("summary-buckets-sum");
+        let mut app = seed_summary();
+
+        for (mode, name) in scopes().into_iter().chain([(ViewMode::Year, "year")]) {
+            app.view_mode = mode;
+            let rows = app.project_summary();
+            let grid = app.project_buckets(&rows);
+            assert_eq!(
+                grid.rows.len(),
+                rows.len(),
+                "{name}: a row lost its buckets"
+            );
+            for (row, cells) in rows.iter().zip(&grid.rows) {
+                let summed = cells.iter().fold(chrono::Duration::zero(), |a, c| a + *c);
+                assert_eq!(summed, row.total, "{name}: {} lost time", row.project);
+            }
+        }
+    }
+
+    /// An entry that runs past midnight stays whole in the hour it started.
+    #[test]
+    fn an_entry_lands_wholly_in_the_bucket_holding_its_start() {
+        let _guard = env_guard();
+        sandbox("summary-buckets-start");
+        let today = Local::now().date_naive();
+        let mut late = logged(1, "over midnight", "tt", &[], today, 60);
+        late.start_time = today
+            .and_hms_opt(23, 30, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap();
+        late.end_time = Some(late.start_time + chrono::Duration::minutes(60));
+        seed(vec![logged(0, "morning", "tt", &[], today, 30), late], 2);
+        let mut app = App::new().unwrap();
+        app.selected_date = today;
+        app.view_mode = ViewMode::Day;
+
+        let rows = app.project_summary();
+        let grid = app.project_buckets(&rows);
+        assert_eq!(grid.grain, super::summary::Grain::Hour);
+        let cells = &grid.rows[0];
+        assert_eq!(cells.len(), 24, "the whole day, midnight to midnight");
+        assert_eq!(cells[9].num_minutes(), 30, "the 09:00 hour");
+        assert_eq!(cells[23].num_minutes(), 60, "the whole hour-long entry");
+        assert_eq!(
+            cells[10..23]
+                .iter()
+                .fold(chrono::Duration::zero(), |a, c| a + *c),
+            chrono::Duration::zero(),
+            "time leaked into the hours between"
+        );
+        assert_eq!(
+            cells[0].num_minutes(),
+            0,
+            "the entry ran past midnight into no bucket of its own"
+        );
+    }
+
+    /// Bucket lists are index for index with the rows they were given.
+    #[test]
+    fn project_buckets_line_up_with_the_rows_they_were_given() {
+        let _guard = env_guard();
+        sandbox("summary-buckets-order");
+        let mut app = seed_summary();
+        app.view_mode = ViewMode::Week;
+
+        let rows = app.project_summary();
+        let grid = app.project_buckets(&rows);
+        assert_eq!(grid.grain, super::summary::Grain::Day);
+        let minutes = |name: &str| {
+            let index = rows.iter().position(|row| row.project == name).unwrap();
+            grid.rows[index]
+                .iter()
+                .map(|cell| cell.num_minutes())
+                .collect::<Vec<_>>()
+        };
+        // vinge is logged on day two alone, tt on day one alone.
+        assert_eq!(minutes("vinge"), vec![0, 120, 0, 0, 0, 0, 0]);
+        assert_eq!(minutes("tt"), vec![90, 0, 0, 0, 0, 0, 0]);
+    }
+
     /// The drawn Summary box, between its top and bottom borders.
     fn summary_box(app: &mut App, width: u16, height: u16) -> Vec<String> {
         let screen = frame_lines(app, width, height);
@@ -3933,6 +4277,510 @@ mod tests {
         assert_eq!(narrow.len(), 5, "{narrow:#?}");
     }
 
+    /// The five views, with a name to report against; `ViewMode` is not `Debug`.
+    fn views() -> [(ViewMode, &'static str); 5] {
+        [
+            (ViewMode::Day, "day"),
+            (ViewMode::Week, "week"),
+            (ViewMode::Month, "month"),
+            (ViewMode::Year, "year"),
+            (ViewMode::All, "all"),
+        ]
+    }
+
+    /// One flag decides the whole content area, in every view: the list and the
+    /// heat never share it.
+    #[test]
+    fn every_view_draws_its_list_or_its_heat_by_the_flag() {
+        let _guard = env_guard();
+        sandbox("content-dispatch");
+        let today = Local::now().date_naive();
+        seed(vec![logged(0, "a", "tt", &[], today, 60)], 1);
+        let mut app = App::new().unwrap();
+        app.selected_date = today;
+
+        for (view, name) in views() {
+            app.view_mode = view;
+
+            app.heat_view = false;
+            let list = frame_lines(&mut app, 120, 30).join("\n");
+            assert!(
+                list.contains("Description"),
+                "{name} list: no table:\n{list}"
+            );
+            assert!(
+                !list.contains("tracked over"),
+                "{name} list: a heat block came with it:\n{list}"
+            );
+
+            app.heat_view = true;
+            let heat = frame_lines(&mut app, 120, 30).join("\n");
+            assert!(
+                heat.contains("tracked over"),
+                "{name} heat: no heat block:\n{heat}"
+            );
+            assert!(
+                !heat.contains("Description"),
+                "{name} heat: the table came with it:\n{heat}"
+            );
+        }
+
+        // The Year view keeps its own two-dimensional grid rather than a row.
+        app.view_mode = ViewMode::Year;
+        let year = frame_lines(&mut app, 120, 30).join("\n");
+        assert!(
+            year.contains("Mon") && year.contains("Sun"),
+            "the year heat lost its weekday bands:\n{year}"
+        );
+    }
+
+    /// In heat mode the heat row already carries the per-day shape, so the
+    /// side panel that repeats it is dropped.
+    #[test]
+    fn the_week_view_keeps_its_daily_totals_only_as_a_list() {
+        let _guard = env_guard();
+        sandbox("content-dispatch-week");
+        let today = Local::now().date_naive();
+        seed(vec![logged(0, "a", "tt", &[], today, 60)], 1);
+        let mut app = App::new().unwrap();
+        app.selected_date = today;
+        app.view_mode = ViewMode::Week;
+
+        assert!(
+            frame_lines(&mut app, 120, 30)
+                .join("\n")
+                .contains("Daily Totals")
+        );
+        app.heat_view = true;
+        assert!(
+            !frame_lines(&mut app, 120, 30)
+                .join("\n")
+                .contains("Daily Totals"),
+            "the side panel survived into heat mode"
+        );
+    }
+
+    /// The grid's columns as minutes, summed down its rows, so a test reads
+    /// the fold directly.
+    fn heat_minutes(app: &App) -> Vec<i64> {
+        let grid = app.view_heat_grid(80, 20);
+        let band = &grid.bands[0];
+        (0..band.columns())
+            .map(|column| {
+                band.cells
+                    .iter()
+                    .filter_map(|row| row[column])
+                    .fold(chrono::Duration::zero(), |acc, held| acc + held)
+                    .num_minutes()
+            })
+            .collect()
+    }
+
+    /// The day's own 24 hours, with an entry in the hour it ran.
+    #[test]
+    fn a_day_view_folds_its_own_twenty_four_hours() {
+        let _guard = env_guard();
+        sandbox("heat-grid-day-fold");
+        let today = Local::now().date_naive();
+        seed(vec![logged(0, "a", "tt", &[], today, 45)], 1);
+        let mut app = App::new().unwrap();
+        app.selected_date = today;
+        app.view_mode = ViewMode::Day;
+
+        let grid = app.view_heat_grid(80, 20);
+        assert_eq!(grid.bands[0].cell_span, chrono::Duration::hours(1));
+        let minutes = heat_minutes(&app);
+        assert_eq!(minutes.len(), 24);
+        // `logged` starts at 09:00.
+        assert_eq!(minutes[9], 45);
+        assert_eq!(minutes.iter().sum::<i64>(), 45, "time leaked into an hour");
+    }
+
+    #[test]
+    fn a_month_view_folds_one_bucket_per_day_of_its_month() {
+        let _guard = env_guard();
+        sandbox("heat-buckets-month");
+        let february = NaiveDate::from_ymd_opt(2026, 2, 10).unwrap();
+        seed(vec![logged(0, "a", "tt", &[], february, 60)], 1);
+        let mut app = App::new().unwrap();
+        app.selected_date = february;
+        app.view_mode = ViewMode::Month;
+
+        let minutes = heat_minutes(&app);
+        assert_eq!(minutes.len(), 28, "February 2026 has 28 days");
+        assert_eq!(minutes[9], 60, "the 10th is column 9");
+    }
+
+    /// The content heat folds what the table walks, so a pane filter moves it —
+    /// unlike the Summary's strips, which the scope alone drives.
+    #[test]
+    fn a_project_filter_changes_the_content_heat_totals() {
+        let _guard = env_guard();
+        sandbox("heat-buckets-filtered");
+        let today = Local::now().date_naive();
+        seed(
+            vec![
+                logged(0, "a", "tt", &[], today, 60),
+                logged(1, "b", "other", &[], today, 30),
+            ],
+            2,
+        );
+        let mut app = App::new().unwrap();
+        app.selected_date = today;
+        app.view_mode = ViewMode::Day;
+        assert_eq!(heat_minutes(&app).iter().sum::<i64>(), 90);
+
+        app.project_filter.cycle("tt", true);
+        assert!(!app.summary_follows_filters, "the scope-only default holds");
+        assert_eq!(
+            heat_minutes(&app).iter().sum::<i64>(),
+            60,
+            "the heat folded the scope instead of the filtered entries"
+        );
+    }
+
+    /// The heat-strip cells inside the drawn Summary box, as `(x, y, colour)`.
+    /// `frame_lines` collects symbols alone, so a strip of blank coloured cells
+    /// is invisible to it; this reads the background the cell really carries.
+    fn summary_heat_cells(
+        app: &mut App,
+        width: u16,
+        height: u16,
+    ) -> Vec<(u16, u16, ratatui::style::Color)> {
+        let mut terminal =
+            Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| render::ui(f, app)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let palette: Vec<_> = [(0, 1), (1, 4), (1, 2), (3, 4), (1, 1)]
+            .into_iter()
+            .map(|(part, max)| super::theme::heat_shade(part, max))
+            .collect();
+        let row_text = |y: u16| {
+            (0..width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        };
+        let top = (0..height)
+            .find(|y| row_text(*y).contains("Summary (S)"))
+            .expect("no Summary box");
+        let bottom = (top + 1..height)
+            .find(|y| row_text(*y).contains('\u{2518}'))
+            .expect("no Summary foot");
+        (top + 1..bottom)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .filter(|(x, y)| palette.contains(&buffer[(*x, *y)].bg))
+            .map(|(x, y)| (x, y, buffer[(x, y)].bg))
+            .collect()
+    }
+
+    /// Four projects, each busy on its own weekday. Each strip must ride its
+    /// own project's row: one strip per row, the busy cell moving one place
+    /// right as the rows go down, and no cell shared between two rows.
+    #[test]
+    fn every_project_gets_its_own_strip_on_its_own_row() {
+        let _guard = env_guard();
+        sandbox("summary-strip-alignment");
+        let week = TimeData::week_start(Local::now().date_naive());
+        // The rows tie on time, so the name orders them: the names are chosen
+        // to sort in the same order as the weekdays they are busy on.
+        let names = ["aa", "bb", "cc", "dd"];
+        let entries: Vec<TimeEntry> = names
+            .iter()
+            .enumerate()
+            .map(|(day, project)| {
+                logged(
+                    day as u64,
+                    "x",
+                    project,
+                    &[],
+                    week + chrono::Duration::days(day as i64),
+                    60,
+                )
+            })
+            .collect();
+        seed(entries, 4);
+        let mut app = App::new().unwrap();
+        app.selected_date = week;
+        app.view_mode = ViewMode::Week;
+        app.toggle_summary();
+        app.summary_heat = true;
+
+        for width in [60u16, 90, 120, 200] {
+            let cells = summary_heat_cells(&mut app, width, 40);
+            let mut lines: Vec<(u16, Vec<u16>)> = Vec::new();
+            for (x, y, _) in cells {
+                match lines.iter_mut().find(|(row, _)| *row == y) {
+                    Some((_, columns)) => columns.push(x),
+                    None => lines.push((y, vec![x])),
+                }
+            }
+            lines.sort_by_key(|(y, _)| *y);
+            assert_eq!(
+                lines.len(),
+                names.len(),
+                "width {width}: {} rows carry a strip, not {}",
+                lines.len(),
+                names.len()
+            );
+            // Each row sits one line under the last, as its table row does.
+            for pair in lines.windows(2) {
+                assert_eq!(
+                    pair[1].0,
+                    pair[0].0 + 1,
+                    "width {width}: the strips left their own rows"
+                );
+            }
+            let mut last_start = None;
+            let mut cell_width = None;
+            for (index, (_, columns)) in lines.iter().enumerate() {
+                let mut columns = columns.clone();
+                columns.sort_unstable();
+                let start = columns[0];
+                let run = *columns.last().unwrap() - start + 1;
+                assert_eq!(
+                    run as usize,
+                    columns.len(),
+                    "width {width}: {} holds a broken run of cells",
+                    names[index]
+                );
+                assert_eq!(
+                    *cell_width.get_or_insert(columns.len()),
+                    columns.len(),
+                    "width {width}: {} draws a cell of its own size",
+                    names[index]
+                );
+                if let Some(last) = last_start {
+                    assert!(
+                        start > last,
+                        "width {width}: {} did not start right of the row above",
+                        names[index]
+                    );
+                }
+                last_start = Some(start);
+            }
+        }
+    }
+
+    /// The strip rides the project's own row, right of `share`, and the ticks
+    /// head it in the same columns. Only worked buckets carry colour.
+    #[test]
+    fn the_expanded_summary_draws_a_heat_strip_right_of_the_share_column() {
+        let _guard = env_guard();
+        sandbox("summary-strip-draw");
+        let mut app = seed_summary();
+        app.view_mode = ViewMode::Week;
+        app.toggle_summary();
+        app.summary_heat = true;
+
+        let box_lines = summary_box(&mut app, 120, 40);
+        // header, four projects, rule, total: the strips cost no line.
+        assert_eq!(box_lines.len(), 7, "{box_lines:#?}");
+        let share_end = box_lines[1]
+            .chars()
+            .position(|c| c == '%')
+            .expect("no share on the row") as u16;
+        // Two blanks, the rule of the strip's own column, two blanks.
+        assert!(
+            box_lines[0].contains("share  \u{2502}  Mon"),
+            "the ticks do not head the strip past its separator: {}",
+            box_lines[0]
+        );
+        assert!(
+            box_lines[1].contains("\u{2502}"),
+            "the project row lost the separator: {}",
+            box_lines[1]
+        );
+
+        let screen = frame_lines(&mut app, 120, 40);
+        let top = screen
+            .iter()
+            .position(|line| line.contains("Summary (S)"))
+            .unwrap() as u16;
+        let cells = summary_heat_cells(&mut app, 120, 40);
+        assert!(!cells.is_empty(), "no strip:\n{}", box_lines.join("\n"));
+        assert!(
+            cells.iter().all(|(x, _, _)| *x > share_end),
+            "a strip cell sits on the share column"
+        );
+        // The rows run from the line under the header to the rule above the
+        // total, so nothing is painted on the header, the rule or the total.
+        assert!(
+            cells.iter().all(|(_, y, _)| *y > top + 1 && *y <= top + 5),
+            "a heat cell fell outside the project rows"
+        );
+        // vinge's Tuesday is the largest bucket, so it alone is hottest.
+        let hottest: Vec<u16> = cells
+            .iter()
+            .filter(|(_, _, color)| *color == super::theme::heat_shade(1, 1))
+            .map(|(_, y, _)| *y)
+            .collect();
+        assert!(!hottest.is_empty(), "nothing carries the grid maximum");
+        assert!(
+            hottest.iter().all(|y| *y == top + 2),
+            "the hottest cells are not on the busiest project's row"
+        );
+        assert!(
+            box_lines.iter().all(|line| line.ends_with('\u{2502}')),
+            "a strip ran over the right border:\n{}",
+            box_lines.join("\n")
+        );
+    }
+
+    /// An empty bucket keeps the surface behind it: only worked time is drawn.
+    #[test]
+    fn an_empty_bucket_carries_no_colour_of_its_own() {
+        let _guard = env_guard();
+        sandbox("summary-strip-empty");
+        let today = Local::now().date_naive();
+        seed(vec![logged(0, "one hour", "tt", &[], today, 60)], 1);
+        let mut app = App::new().unwrap();
+        app.selected_date = today;
+        app.view_mode = ViewMode::Day;
+        app.toggle_summary();
+        app.summary_heat = true;
+
+        let cells = summary_heat_cells(&mut app, 120, 40);
+        let rows = app.project_summary();
+        let (cell_width, _) = summary::strip_cells(
+            // the free width the one row leaves right of its separator
+            120 - 2 - 1 - "(no project)".len().max(7) - 21 - 5,
+            app.project_buckets(&rows).len(),
+        );
+        assert_eq!(
+            cells.len(),
+            cell_width,
+            "the empty hours of the day were painted too"
+        );
+    }
+
+    /// Every view heads its strip with the ticks of the period it covers.
+    #[test]
+    fn the_strip_ticks_head_the_period_each_view_covers() {
+        let _guard = env_guard();
+        sandbox("summary-strip-axis");
+        let mut app = seed_summary();
+        app.toggle_summary();
+        app.summary_heat = true;
+
+        for (mode, ticks) in [
+            (ViewMode::Day, vec!["00", "06", "12", "18"]),
+            (ViewMode::Week, vec!["Mon", "Sun"]),
+            (ViewMode::Year, vec!["Jan", "Dec"]),
+        ] {
+            app.view_mode = mode;
+            let header = summary_box(&mut app, 120, 40)[0].clone();
+            for tick in ticks {
+                assert!(header.contains(tick), "no `{tick}` on the header: {header}");
+            }
+        }
+
+        // A month is a day axis too long for weekday names: sparse dates instead.
+        app.view_mode = ViewMode::Month;
+        let header = summary_box(&mut app, 120, 40)[0].clone();
+        let axis = header
+            .split_once('\u{2502}')
+            .map(|(_, axis)| axis.to_string())
+            .expect("no strip separator on the header");
+        for date in ["1", "8", "15", "22", "29"] {
+            assert!(axis.contains(date), "no `{date}` on the axis: {axis}");
+        }
+        assert!(
+            !axis.contains("Mon") && !axis.contains("Tue"),
+            "a month of weekday names: {axis}"
+        );
+    }
+
+    /// The collapsed box is the total line alone; no strip comes with it, even
+    /// with the strips asked for.
+    #[test]
+    fn a_collapsed_summary_draws_no_heat_strip() {
+        let _guard = env_guard();
+        sandbox("summary-strip-collapsed");
+        let mut app = seed_summary();
+        app.view_mode = ViewMode::Week;
+        app.summary_heat = true;
+
+        assert!(summary_heat_cells(&mut app, 120, 40).is_empty());
+    }
+
+    /// The strips are opt-in: `m` is what asks for them.
+    #[test]
+    fn m_shows_and_hides_the_summary_heat_strips() {
+        let _guard = env_guard();
+        sandbox("summary-strip-toggle");
+        let mut app = seed_summary();
+        app.view_mode = ViewMode::Week;
+        app.toggle_summary();
+
+        assert!(
+            summary_heat_cells(&mut app, 120, 40).is_empty(),
+            "the strips drew without being asked for"
+        );
+        app.toggle_summary_heat();
+        assert!(
+            !summary_heat_cells(&mut app, 120, 40).is_empty(),
+            "`m` did not bring the strips"
+        );
+        app.toggle_summary_heat();
+        assert!(
+            summary_heat_cells(&mut app, 120, 40).is_empty(),
+            "`m` did not take the strips away again"
+        );
+    }
+
+    /// Too narrow for a strip worth reading, the row drops it whole rather
+    /// than drawing a stub, and no row runs over the border.
+    #[test]
+    fn a_narrow_summary_sheds_the_heat_strip_whole() {
+        let _guard = env_guard();
+        sandbox("summary-strip-shed");
+        let mut app = seed_summary();
+        app.view_mode = ViewMode::Week;
+        app.toggle_summary();
+        app.toggle_summary_split();
+        app.summary_heat = true;
+
+        assert!(
+            summary_heat_cells(&mut app, 60, 40).is_empty(),
+            "a stub strip"
+        );
+        let box_lines = summary_box(&mut app, 60, 40);
+        assert!(
+            box_lines.iter().all(|line| line.ends_with('\u{2502}')),
+            "a row ran over the right border:\n{}",
+            box_lines.join("\n")
+        );
+    }
+
+    /// The columns the strip sits beside are unchanged in either split mode.
+    #[test]
+    fn the_heat_strip_leaves_the_number_columns_alone() {
+        let _guard = env_guard();
+        sandbox("summary-strip-columns");
+        let mut app = seed_summary();
+        app.view_mode = ViewMode::Week;
+        app.toggle_summary();
+        app.summary_heat = true;
+
+        for split in [false, true] {
+            if split {
+                app.toggle_summary_split();
+            }
+            let box_lines = summary_box(&mut app, 140, 40);
+            assert!(box_lines[0].contains("count share"), "{}", box_lines[0]);
+            assert!(box_lines[1].contains("2h 0m"), "{}", box_lines[1]);
+            assert!(
+                box_lines[1].contains("32%"),
+                "split={split}: {}",
+                box_lines[1]
+            );
+            assert!(
+                !summary_heat_cells(&mut app, 140, 40).is_empty(),
+                "split={split}: no strip"
+            );
+        }
+    }
+
     /// `nothing in scope` keeps the box it has: no header over an empty surface.
     #[test]
     fn an_empty_summary_scope_gets_no_header_row() {
@@ -3993,7 +4841,7 @@ mod tests {
         assert_eq!(app.summary_surface_height(), 3, "collapsed: the total row");
 
         // Two borders, the header, the rule, the total, and one row per project:
-        // the day has three.
+        // the day has three. The strips ride the rows, so they cost no line.
         app.toggle_summary();
         assert_eq!(app.summary_surface_height(), 8);
         // Re-scoping re-sizes it: the week has four projects, all entries too.
@@ -4066,6 +4914,10 @@ mod tests {
                 .count(),
             2,
             "one legend per pane: {border}"
+        );
+        assert!(
+            border.starts_with("\u{2514} Enter: filter"),
+            "a key legend sits on the left of its border: {border}"
         );
 
         // 80 columns split in two leave 38 inner cells; the legend is 37.
@@ -4164,12 +5016,97 @@ mod tests {
 
         let border = summary_bottom_border(&mut app, 100, 40);
         assert!(
-            border.contains(" v: split \u{b7} f: filter "),
-            "no legend on the border: {border}"
+            border.starts_with("\u{2514} v: split \u{b7} f: filter \u{b7} m: heat "),
+            "the key legend is not on the left of its border: {border}"
         );
         assert!(
             border.ends_with('\u{2518}'),
             "the legend ate the corner: {border}"
+        );
+    }
+
+    /// The bottom border of the box opened by `title`, whichever box it is.
+    fn bottom_border(app: &mut App, title: &str, width: u16, height: u16) -> String {
+        let screen = frame_lines(app, width, height);
+        let top = screen
+            .iter()
+            .position(|line| line.contains(title))
+            .unwrap_or_else(|| panic!("no `{title}` box:\n{}", screen.join("\n")));
+        screen[top..]
+            .iter()
+            .find(|line| line.contains('\u{2518}'))
+            .cloned()
+            .unwrap_or_else(|| panic!("no bottom border:\n{}", screen.join("\n")))
+    }
+
+    /// The toggle is discoverable where it acts, in both representations and
+    /// in every view.
+    #[test]
+    fn the_content_box_names_the_m_toggle_on_its_bottom_border() {
+        let _guard = env_guard();
+        sandbox("content-legend-render");
+        let today = Local::now().date_naive();
+        seed(vec![logged(0, "a", "tt", &[], today, 60)], 1);
+        let mut app = App::new().unwrap();
+        app.selected_date = today;
+
+        for (view, name) in views() {
+            app.view_mode = view;
+
+            app.heat_view = false;
+            // The column header, not the title: `All Entries` names the tabs row too.
+            let border = bottom_border(&mut app, "Description", 120, 40);
+            assert!(
+                border.contains("\u{2514} M: heatmap"),
+                "{name} list: no legend on the content border: {border}"
+            );
+
+            app.heat_view = true;
+            let border = bottom_border(&mut app, "tracked over", 120, 40);
+            assert!(
+                border.contains("\u{2514} M: list"),
+                "{name} heat: no legend on the content border: {border}"
+            );
+        }
+    }
+
+    /// One convention across the whole TUI: keys on the left, ramps on the
+    /// right, so the two never fight for the same corner.
+    #[test]
+    fn every_colour_ramp_sits_on_the_right_of_its_border() {
+        let _guard = env_guard();
+        sandbox("legend-sides");
+        let mut app = seed_summary();
+        app.toggle_summary();
+        app.heat_view = true;
+        app.summary_heat = true;
+
+        let ramp_is_right = |border: &str, what: &str| {
+            let middle = border.chars().count() / 2;
+            let less = border.find("Less").unwrap_or_else(|| {
+                panic!("no ramp on the {what} border: {border}");
+            });
+            assert!(
+                less > middle,
+                "the {what} ramp is not on the right: {border}"
+            );
+        };
+
+        for (view, title) in [
+            (ViewMode::Day, "tracked over"),
+            (ViewMode::Year, "tracked over"),
+        ] {
+            app.view_mode = view;
+            ramp_is_right(&bottom_border(&mut app, title, 120, 40), "heat block");
+        }
+
+        // The Summary's border carries both, so it proves they share a border.
+        app.view_mode = ViewMode::Week;
+        let border = bottom_border(&mut app, "Summary (S)", 120, 40);
+        ramp_is_right(&border, "summary strip");
+        assert!(
+            border.starts_with("\u{2514} v: split"),
+            "the keys left the left of the border: {border}"
         );
     }
 

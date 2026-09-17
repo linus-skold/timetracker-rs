@@ -43,6 +43,13 @@ pub struct ThemeConfig {
     pub member_bg: Option<String>,
     pub day_header_bg: Option<String>,
     pub overlay_bg: Option<String>,
+    /// The "no time tracked" cell in the yearly overview heatmap.
+    pub heatmap_empty: Option<String>,
+    /// Green ramp, lightest to most saturated, for the yearly overview heatmap.
+    pub heatmap_level1: Option<String>,
+    pub heatmap_level2: Option<String>,
+    pub heatmap_level3: Option<String>,
+    pub heatmap_level4: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Deserialize)]
@@ -90,8 +97,9 @@ pub struct AgentConfig {
     pub round_minutes: Option<i64>,
 }
 
-/// Which collapsible TUI surfaces start open, independent of whether
-/// onboarding has run — see [`GeneralConfig`].
+/// How the TUI starts: which collapsible surfaces are open and which
+/// representation each surface opens in. Independent of whether onboarding has
+/// run — see [`GeneralConfig`].
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct LayoutConfig {
     pub show_projects: Option<bool>,
@@ -102,6 +110,10 @@ pub struct LayoutConfig {
     pub summary_split: Option<bool>,
     /// Whether the Summary starts folding the filtered entries.
     pub summary_follows_filters: Option<bool>,
+    /// Whether the content area starts as a heatmap instead of an entry list.
+    pub heat_view: Option<bool>,
+    /// Whether the Summary starts showing its per-project heat strips.
+    pub summary_heat: Option<bool>,
 }
 
 /// Cross-cutting settings. The first-run popup shows until it has run once,
@@ -311,6 +323,11 @@ fn merge_theme(b: ThemeConfig, o: ThemeConfig) -> ThemeConfig {
         member_bg: o.member_bg.or(b.member_bg),
         day_header_bg: o.day_header_bg.or(b.day_header_bg),
         overlay_bg: o.overlay_bg.or(b.overlay_bg),
+        heatmap_empty: o.heatmap_empty.or(b.heatmap_empty),
+        heatmap_level1: o.heatmap_level1.or(b.heatmap_level1),
+        heatmap_level2: o.heatmap_level2.or(b.heatmap_level2),
+        heatmap_level3: o.heatmap_level3.or(b.heatmap_level3),
+        heatmap_level4: o.heatmap_level4.or(b.heatmap_level4),
     }
 }
 
@@ -359,6 +376,8 @@ fn merge_layout(b: LayoutConfig, o: LayoutConfig) -> LayoutConfig {
         show_tags: o.show_tags.or(b.show_tags),
         summary_split: o.summary_split.or(b.summary_split),
         summary_follows_filters: o.summary_follows_filters.or(b.summary_follows_filters),
+        heat_view: o.heat_view.or(b.heat_view),
+        summary_heat: o.summary_heat.or(b.summary_heat),
     }
 }
 

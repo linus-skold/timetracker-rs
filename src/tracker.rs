@@ -362,20 +362,6 @@ impl TimeData {
             .collect()
     }
 
-    /// Total tracked duration per day for a given year, keyed by date. Only
-    /// days with at least one entry appear — a single pass over `entries`,
-    /// unlike calling `total_for_date` once per day of the year.
-    pub fn year_breakdown(&self, year: i32) -> std::collections::BTreeMap<NaiveDate, Duration> {
-        let mut map = std::collections::BTreeMap::new();
-        for entry in &self.entries {
-            let date = entry.start_time.date_naive();
-            if date.year() == year {
-                *map.entry(date).or_insert_with(Duration::zero) += entry.duration();
-            }
-        }
-        map
-    }
-
     /// Update an existing entry by ID
     pub fn update_entry(
         &mut self,
@@ -889,68 +875,5 @@ mod tests {
         assert_eq!(serde_json::to_string(&data).unwrap(), after_first);
         assert_eq!(data.entries[0].project.as_deref(), Some("tt"));
         assert_eq!(data.schema_version, 1);
-    }
-
-    fn at(y: i32, m: u32, d: u32, h: u32) -> DateTime<Local> {
-        NaiveDate::from_ymd_opt(y, m, d)
-            .unwrap()
-            .and_hms_opt(h, 0, 0)
-            .unwrap()
-            .and_local_timezone(Local)
-            .unwrap()
-    }
-
-    fn spanning(id: u64, start: DateTime<Local>, minutes: i64) -> TimeEntry {
-        TimeEntry {
-            id,
-            description: format!("entry {}", id),
-            project: None,
-            tags: Vec::new(),
-            start_time: start,
-            end_time: Some(start + Duration::minutes(minutes)),
-            idle: Vec::new(),
-            data: None,
-        }
-    }
-
-    #[test]
-    fn year_breakdown_sums_same_day_entries_and_excludes_other_years() {
-        let day1_morning = at(2026, 3, 1, 9);
-        let day1_afternoon = at(2026, 3, 1, 14);
-        let day2 = at(2026, 3, 2, 9);
-        let other_year = at(2025, 3, 1, 9);
-
-        let data = TimeData {
-            entries: vec![
-                spanning(1, day1_morning, 60),
-                spanning(2, day1_afternoon, 30),
-                spanning(3, day2, 45),
-                spanning(4, other_year, 999),
-            ],
-            next_id: 5,
-            schema_version: 1,
-        };
-
-        let breakdown = data.year_breakdown(2026);
-
-        assert_eq!(breakdown.len(), 2, "only the two 2026 days appear");
-        assert_eq!(
-            breakdown[&day1_morning.date_naive()],
-            Duration::minutes(90),
-            "same-day entries are summed"
-        );
-        assert_eq!(breakdown[&day2.date_naive()], Duration::minutes(45));
-        assert!(!breakdown.contains_key(&other_year.date_naive()));
-    }
-
-    #[test]
-    fn year_breakdown_is_empty_for_a_year_with_no_entries() {
-        let data = TimeData {
-            entries: vec![spanning(1, at(2026, 1, 1, 9), 60)],
-            next_id: 2,
-            schema_version: 1,
-        };
-
-        assert!(data.year_breakdown(2020).is_empty());
     }
 }

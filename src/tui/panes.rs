@@ -126,7 +126,15 @@ impl App {
                 let week_start = TimeData::week_start(self.selected_date);
                 self.data.entries_for_week(week_start)
             }
-            ViewMode::Overview => {
+            ViewMode::Month => {
+                let (year, month) = (self.selected_date.year(), self.selected_date.month());
+                self.data
+                    .entries
+                    .iter()
+                    .filter(|e| e.start_time.year() == year && e.start_time.month() == month)
+                    .collect()
+            }
+            ViewMode::Year => {
                 let year = self.selected_date.year();
                 self.data
                     .entries
@@ -329,8 +337,10 @@ impl App {
             Pane::Projects => self.project_filter.cycle(&value, forward),
             Pane::Tags => self.tag_filter.cycle(&value, forward),
         }
-        // The row that was selected is very unlikely to still be the same row.
+        // The row that was selected is very unlikely to still be the same row,
+        // and the heat grid holds other projects now.
         self.table_state.select(Some(0));
+        self.heat_scroll = 0;
         true
     }
 

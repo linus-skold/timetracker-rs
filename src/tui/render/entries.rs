@@ -1,119 +1,15 @@
+use super::legend::content_legend;
 use super::overlay::CURSOR_MARKER;
 use crate::tracker::TimeData;
 use crate::tui::panes::Polarity;
 use crate::tui::rows::{GroupHeader, Member, VisibleRow};
 use crate::tui::{App, theme};
-use chrono::{Datelike, Duration, Local, NaiveDate};
+use chrono::{Duration, Local, NaiveDate};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, Row, Table, TableState},
 };
 use std::collections::HashMap;
-
-/// A GitHub-style yearly contribution heatmap: one column per week, one row
-/// per weekday, each cell shaded by `theme::heat_color` for that day's total.
-pub(super) fn render_overview(f: &mut Frame, app: &App, area: Rect) {
-    const GUTTER: usize = 4; // weekday label width, e.g. "Mon "
-    const WEEKDAY_LABELS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-    let year = app.selected_date.year();
-    let breakdown = app.data.year_breakdown(year);
-    let today = Local::now().date_naive();
-
-    let grid_start = TimeData::week_start(NaiveDate::from_ymd_opt(year, 1, 1).unwrap());
-    let grid_end =
-        TimeData::week_start(NaiveDate::from_ymd_opt(year, 12, 31).unwrap()) + Duration::days(6);
-    let total_weeks = ((grid_end - grid_start).num_days() / 7 + 1) as usize;
-
-    // Show only as many of the most recent weeks as fit the available width,
-    // rather than silently clipping mid-cell on a narrow terminal.
-    let available_weeks = ((area.width as usize).saturating_sub(GUTTER) / 2).max(1);
-    let visible_weeks = total_weeks.min(available_weeks);
-    let first_week = total_weeks - visible_weeks;
-
-    // Month header: a fixed-width char grid, so a 3-char abbreviation can
-    // overlap slightly into the next column, same as it does on github.com.
-    let mut header_chars = vec![' '; GUTTER + visible_weeks * 2];
-    for w in 0..visible_weeks {
-        let monday = grid_start + Duration::days(((first_week + w) * 7) as i64);
-        if monday.year() == year && monday.day() <= 7 {
-            let col = GUTTER + w * 2;
-            for (i, ch) in monday.format("%b").to_string().chars().enumerate() {
-                if let Some(slot) = header_chars.get_mut(col + i) {
-                    *slot = ch;
-                }
-            }
-        }
-    }
-    let mut lines = vec![Line::from(Span::styled(
-        header_chars.into_iter().collect::<String>(),
-        Style::default().fg(theme::inactive()),
-    ))];
-
-    for (row, label) in WEEKDAY_LABELS.iter().enumerate() {
-        let mut spans = vec![Span::styled(
-            format!("{:<width$}", label, width = GUTTER),
-            Style::default().fg(theme::inactive()),
-        )];
-        for w in 0..visible_weeks {
-            let date = grid_start + Duration::days(((first_week + w) * 7 + row) as i64);
-            if date.year() != year {
-                spans.push(Span::raw("  "));
-                continue;
-            }
-            let hours = breakdown.get(&date).map(|d| d.num_hours()).unwrap_or(0);
-            let cell_style = Style::default().bg(theme::heat_color(hours));
-            if date == today {
-                spans.push(Span::styled(" ●", cell_style.fg(theme::highlight()).bold()));
-            } else {
-                spans.push(Span::styled("  ", cell_style));
-            }
-        }
-        lines.push(Line::from(spans));
-    }
-
-    // Legend: "Less" -> five progressively hotter swatches -> "More".
-    let t = theme::theme();
-    let mut legend_spans = vec![
-        Span::raw(" ".repeat(GUTTER)),
-        Span::styled("Less ", Style::default().fg(theme::inactive())),
-    ];
-    for hours in [
-        0,
-        1,
-        t.day_duration_med_h / 2,
-        t.day_duration_med_h,
-        t.day_duration_high_h,
-    ] {
-        legend_spans.push(Span::styled(
-            "  ",
-            Style::default().bg(theme::heat_color(hours)),
-        ));
-    }
-    legend_spans.push(Span::styled(
-        " More",
-        Style::default().fg(theme::inactive()),
-    ));
-    lines.push(Line::from(""));
-    lines.push(Line::from(legend_spans));
-
-    let total = breakdown.values().fold(Duration::zero(), |acc, d| acc + *d);
-    let active_days = breakdown.len();
-    let title = format!(
-        " {} tracked over {} active day{} ",
-        crate::duration::format(total),
-        active_days,
-        if active_days == 1 { "" } else { "s" }
-    );
-
-    let paragraph = Paragraph::new(lines).block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::border()))
-            .title(Span::styled(title, Style::default().fg(theme::title()))),
-    );
-    f.render_widget(paragraph, area);
-}
 
 pub(super) fn render_weekly_breakdown(f: &mut Frame, app: &App, area: Rect) {
     let week_start = TimeData::week_start(app.selected_date);
@@ -389,6 +285,14 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
         " Entries ".to_string()
     };
 
+    let mut block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme::border()))
+        .title(Span::styled(title, Style::default().fg(theme::title())));
+    if let Some(keys) = content_legend(app, area.width.saturating_sub(2)) {
+        block = block.title_bottom(keys.left_aligned());
+    }
+
     // `Fill(1)` and `Min(12)` share what the fixed columns leave, so both grow with
     // the terminal. The fixed widths are exactly what they render, with no padding.
     let table = Table::new(
@@ -404,12 +308,7 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
         ],
     )
     .header(header_row)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::border()))
-            .title(Span::styled(title, Style::default().fg(theme::title()))),
-    )
+    .block(block)
     .row_highlight_style(Style::default().bg(theme::selected_bg()))
     .highlight_symbol(CURSOR_MARKER);
 

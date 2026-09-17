@@ -12,10 +12,11 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("h / ←", "previous period"),
             ("l / →", "next period"),
-            ("j / ↓", "select next entry"),
-            ("k / ↑", "select previous entry"),
+            ("j / ↓", "next entry, or the heat grid down"),
+            ("k / ↑", "previous entry, or the heat grid up"),
             ("t", "go to today"),
-            ("1 / 2 / 3 / 4", "day / week / all / overview"),
+            ("1 / 2 / 3 / 4 / 5", "day / week / month / year / all"),
+            ("Shift-M", "list / heatmap"),
             ("?", "toggle this help"),
             ("q / Esc", "quit"),
         ],
@@ -54,6 +55,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Shift-S", "project breakdown on / off"),
             ("v", "human / agent split (Summary focused)"),
             ("f", "follow the filters (Summary focused)"),
+            ("m", "summary heat strips"),
         ],
     ),
 ];
