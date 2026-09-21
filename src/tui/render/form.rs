@@ -244,7 +244,7 @@ pub(super) fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
         form_title
     };
     let help = Paragraph::new(Line::from(vec![
-        Span::styled("Tab", Style::default().fg(theme::accent())),
+        Span::styled("Tab/↑↓", Style::default().fg(theme::accent())),
         Span::styled(": switch field | ", Style::default().fg(theme::inactive())),
         Span::styled("Enter", Style::default().fg(theme::accent())),
         Span::styled(": save | ", Style::default().fg(theme::inactive())),

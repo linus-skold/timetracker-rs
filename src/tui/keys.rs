@@ -143,8 +143,9 @@ fn form(app: &mut App, key: KeyEvent, submit: fn(&mut App) -> Result<()>) -> Res
     match key.code {
         KeyCode::Esc => app.cancel_adding(),
         KeyCode::Enter => submit(app)?,
-        KeyCode::Tab => app.next_input_field(),
-        KeyCode::BackTab => app.prev_input_field(),
+        // The form holds no list of its own, so the arrows walk the fields.
+        KeyCode::Tab | KeyCode::Down => app.next_input_field(),
+        KeyCode::BackTab | KeyCode::Up => app.prev_input_field(),
         KeyCode::Backspace => app.handle_input_backspace(),
         KeyCode::Char(c) => app.handle_input_char(c),
         _ => {
@@ -304,6 +305,20 @@ mod tests {
         press(&mut app, KeyCode::BackTab);
         assert_eq!(app.input_field, InputField::Description);
         // The description is untouched by the detour.
+        assert_eq!(app.input_description.value(), "hello");
+    }
+
+    #[test]
+    fn down_and_up_walk_the_form_fields() {
+        let _guard = env_guard();
+        sandbox("keys-arrows");
+        let mut app = adding_with("hello");
+
+        press(&mut app, KeyCode::Down);
+        assert_eq!(app.input_field, InputField::Project);
+
+        press(&mut app, KeyCode::Up);
+        assert_eq!(app.input_field, InputField::Description);
         assert_eq!(app.input_description.value(), "hello");
     }
 
