@@ -135,7 +135,9 @@ tt
 
 **Views.** The number keys pick the period the screen reports on, shortest
 first: `1` day, `2` week, `3` month, `4` year, `5` all entries. `h` and `l`
-step one period back or forward.
+step one period back or forward. The Entries box title names the view,
+the period and the sort order, and the first line in the box shows the five
+views with the current one marked.
 
 **Heatmaps.** `M` flips the open view between its entry list and a heatmap of
 the same period. Each heatmap is a grid with two axes. A cell becomes darker

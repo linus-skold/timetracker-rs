@@ -2,6 +2,7 @@
 //! `Less … More` ramps, and the content pane's own two-dimensional grid.
 
 use super::legend::content_legend;
+use super::view_header::{SELECTOR_HEIGHT, content_title, render_view_selector};
 use crate::tui::summary::{BucketGrid, HeatBand, HeatGrid, axis_tick, strip_cells};
 use crate::tui::types::ViewMode;
 use crate::tui::{App, theme};
@@ -14,10 +15,10 @@ use ratatui::{
 /// Today's cell marker, as the year grid draws it too.
 pub(super) const TODAY_MARKER: &str = "\u{25cf}";
 
-/// What a heat block calls itself: its total and how many `unit`s made it.
+/// The tail of a heat block's title: its total and how many `unit`s made it.
 pub(super) fn heat_block_title(total: Duration, active: usize, unit: &str) -> String {
     format!(
-        " {} tracked over {} active {}{} ",
+        "{} tracked over {} active {}{}",
         crate::duration::format(total),
         active,
         unit,
@@ -31,7 +32,7 @@ pub(super) fn heat_block_title(total: Duration, active: usize, unit: &str) -> St
 /// the shading does not re-scale as the user pages through periods.
 pub(super) fn render_heat_grid(f: &mut Frame, app: &mut App, area: Rect) {
     let inner_width = area.width.saturating_sub(2);
-    let inner_height = area.height.saturating_sub(2);
+    let inner_height = area.height.saturating_sub(2 + SELECTOR_HEIGHT);
     let grid = app.view_heat_grid(inner_width, inner_height);
     // The draw owns the clamp: it alone knows the room and the layout. `j`
     // and `k` read the limit back off `App`.
@@ -54,7 +55,11 @@ pub(super) fn render_heat_grid(f: &mut Frame, app: &mut App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme::border()))
         .title(Span::styled(
-            heat_block_title(grid.total, grid.active(), grid.unit),
+            content_title(
+                app,
+                "Heatmap",
+                &heat_block_title(grid.total, grid.active(), grid.unit),
+            ),
             Style::default().fg(theme::title()),
         ));
     if let Some(keys) = keys {
@@ -64,6 +69,10 @@ pub(super) fn render_heat_grid(f: &mut Frame, app: &mut App, area: Rect) {
         block = block.title_bottom(ramp.right_aligned());
     }
 
+    let frame = block.inner(area);
+    f.render_widget(block, area);
+    let grid_area = render_view_selector(f, app, frame);
+
     let available = (inner_width as usize).saturating_sub(grid.gutter);
     let (drawn, first_row) = scrolled(app, &grid);
     let rows_total: usize = drawn
@@ -72,7 +81,7 @@ pub(super) fn render_heat_grid(f: &mut Frame, app: &mut App, area: Rect) {
         .sum::<usize>()
         .saturating_sub(first_row);
     if rows_total == 0 || available == 0 {
-        f.render_widget(Paragraph::new(Vec::<Line>::new()).block(block), area);
+        f.render_widget(Paragraph::new(Vec::<Line>::new()), grid_area);
         return;
     }
     // Every band keeps its axis line and a blank line before the next;
@@ -139,7 +148,7 @@ pub(super) fn render_heat_grid(f: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     }
-    f.render_widget(Paragraph::new(lines).block(block), area);
+    f.render_widget(Paragraph::new(lines), grid_area);
 }
 
 /// How far the offset may go: the rows or bands the box has no room for, at
@@ -337,14 +346,14 @@ mod tests {
         app
     }
 
-    /// Every inner line of the drawn block, as `(text, painted columns)`.
+    /// Every grid line under the selector, as `(text, painted columns)`.
     fn drawn(app: &mut App, width: u16, height: u16) -> Vec<(String, Vec<u16>)> {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal
             .draw(|f| render_heat_grid(f, app, f.area()))
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
-        (1..height.saturating_sub(1))
+        (1 + SELECTOR_HEIGHT..height.saturating_sub(1))
             .map(|y| {
                 let text: String = (1..width - 1).map(|x| buffer[(x, y)].symbol()).collect();
                 let painted: Vec<u16> = (1..width - 1)
@@ -409,7 +418,7 @@ mod tests {
             ],
         );
 
-        let lines = drawn(&mut app, 80, 20);
+        let lines = drawn(&mut app, 80, 21);
         let ticks: Vec<&str> = lines
             .iter()
             .map(|(text, _)| text.as_str())
@@ -496,12 +505,12 @@ mod tests {
         app.data.entries[1].project = Some("beta".to_string());
         app.data.entries[2].project = Some("gamma".to_string());
 
-        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(140, 12)).unwrap();
         terminal
             .draw(|f| render_heat_grid(f, &mut app, f.area()))
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
-        let title: String = (0..80).map(|x| buffer[(x, 0)].symbol()).collect();
+        let title: String = (0..140).map(|x| buffer[(x, 0)].symbol()).collect();
         assert!(title.contains("1 active hour"), "{title}");
     }
 
@@ -525,7 +534,7 @@ mod tests {
         app.heat_scroll = 6;
 
         // Eight inner lines: the axis, then seven of the eight rows.
-        drawn(&mut app, 80, 10);
+        drawn(&mut app, 80, 12);
         assert_eq!(app.heat_scroll_max, 1);
         assert_eq!(app.heat_scroll, 1, "the offset outlived the taller box");
 
@@ -570,8 +579,8 @@ mod tests {
             painted.iter().all(|count| *count == 24 * 2),
             "a cell was clipped or dropped: {painted:?}"
         );
-        // Ten inner lines less the axis: the one row takes the other nine.
-        assert_eq!(painted.len(), 9, "the row did not fill the box");
+        // Eight grid lines less the axis: the one row takes the other seven.
+        assert_eq!(painted.len(), 7, "the row did not fill the box");
     }
 
     /// A cell shades by how full its own span is, not by the busiest cell, so
@@ -595,7 +604,7 @@ mod tests {
             .draw(|f| render_heat_grid(f, &mut app, f.area()))
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
-        let cells: Vec<Color> = (1..79).map(|x| buffer[(x, 2)].bg).collect();
+        let cells: Vec<Color> = (1..79).map(|x| buffer[(x, 4)].bg).collect();
         let gutter = 12;
         assert_eq!(
             cells[gutter + 9 * 2],
@@ -621,7 +630,7 @@ mod tests {
             vec![entry(0, day.and_hms_opt(9, 0, 0).unwrap(), 60)],
         );
 
-        let lines = drawn(&mut app, 80, 16);
+        let lines = drawn(&mut app, 80, 17);
         assert!(
             lines[0].0.contains("Mon"),
             "no weekday axis: {}",
@@ -651,7 +660,7 @@ mod tests {
             vec![entry(0, day.and_hms_opt(9, 0, 0).unwrap(), 60)],
         );
 
-        let lines = drawn(&mut app, 80, 16);
+        let lines = drawn(&mut app, 80, 17);
         let widest = lines
             .iter()
             .map(|(_, cells)| cells.len())
@@ -680,12 +689,12 @@ mod tests {
             ],
         );
 
-        let mut terminal = Terminal::new(TestBackend::new(80, 12)).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(140, 12)).unwrap();
         terminal
             .draw(|f| render_heat_grid(f, &mut app, f.area()))
             .unwrap();
         let buffer = terminal.backend().buffer().clone();
-        let title: String = (0..80).map(|x| buffer[(x, 0)].symbol()).collect();
+        let title: String = (0..140).map(|x| buffer[(x, 0)].symbol()).collect();
         assert!(
             title.contains(&crate::duration::format(app.filtered_total())),
             "the title disagrees with the list: {title}"

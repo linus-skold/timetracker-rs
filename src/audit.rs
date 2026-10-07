@@ -47,9 +47,9 @@ impl Unaccounted {
             n => format!(", {n} subagent dispatches"),
         };
         format!(
-            "{} - since {} ({}{}) session {}{}",
+            "{} - {} ({}{}) session {}{}",
             self.project,
-            self.start.format("%H:%M"),
+            self.since(),
             crate::duration::format(self.end.signed_duration_since(self.start)),
             subagents,
             self.session_hint(),
@@ -63,6 +63,15 @@ fn as_epoch<S: serde::Serializer>(at: &DateTime<Local>, serializer: S) -> Result
 }
 
 impl Unaccounted {
+    /// `since <time>` for a start today, else `<date> <time>`.
+    fn since(&self) -> String {
+        if self.start.date_naive() == Local::now().date_naive() {
+            format!("since {}", self.start.format("%H:%M"))
+        } else {
+            self.start.format("%-d %b, %H:%M").to_string()
+        }
+    }
+
     /// The leading characters of the session id, enough to read two rows apart.
     /// Never an address: the full id is what a command is given.
     fn session_hint(&self) -> String {
@@ -843,6 +852,41 @@ mod tests {
         assert!(
             unaccounted(&sessions, &marks, &[], at(121 * 60), FLOOR).is_empty(),
             "an hour of the 121-minute bound is left, under the 120-minute floor"
+        );
+    }
+
+    #[test]
+    fn a_row_reads_since_today_and_dated_before_today() {
+        let row = Unaccounted {
+            project: "tt".to_string(),
+            session_id: "abcdef0123".to_string(),
+            start: at(0),
+            end: at(HOUR),
+            subagents: 0,
+            abandoned: false,
+        };
+        let expected = at(0).format("%-d %b, %H:%M").to_string();
+        let text = row.describe();
+        assert!(
+            text.contains(&expected) && !text.contains("since"),
+            "{text}"
+        );
+
+        let midnight = Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap();
+        let row = Unaccounted {
+            start: midnight,
+            end: midnight + chrono::Duration::hours(1),
+            ..row
+        };
+        assert!(
+            row.describe().contains("since 00:00 ("),
+            "{}",
+            row.describe()
         );
     }
 

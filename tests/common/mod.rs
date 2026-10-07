@@ -337,11 +337,27 @@ pub fn now() -> i64 {
 
 /// The `HH:MM` a fixture's own epoch renders as.
 pub fn clock(epoch: i64) -> String {
+    local(epoch).format("%H:%M").to_string()
+}
+
+/// The `D Mon, HH:MM` an audit row renders for an epoch not from today.
+pub fn dated_clock(epoch: i64) -> String {
+    local(epoch).format("%-d %b, %H:%M").to_string()
+}
+
+/// The start an audit row renders: `since HH:MM` today, else `dated_clock`.
+pub fn audit_start(epoch: i64) -> String {
+    if local(epoch).date_naive() == chrono::Local::now().date_naive() {
+        format!("since {}", clock(epoch))
+    } else {
+        dated_clock(epoch)
+    }
+}
+
+fn local(epoch: i64) -> chrono::DateTime<chrono::Local> {
     chrono::DateTime::from_timestamp(epoch, 0)
         .unwrap()
         .with_timezone(&chrono::Local)
-        .format("%H:%M")
-        .to_string()
 }
 
 /// One fabricated store row for [`Case::write_store`].

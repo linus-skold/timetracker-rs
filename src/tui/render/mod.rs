@@ -11,6 +11,7 @@ mod onboarding;
 mod overlay;
 mod popups;
 mod surfaces;
+mod view_header;
 
 use column_picker::render_column_picker_popup;
 use entries::{render_entries_table, render_weekly_breakdown};
@@ -20,13 +21,11 @@ use onboarding::render_onboarding_popup;
 use popups::{render_confirm_popup, render_detail_popup, render_help_popup};
 use surfaces::{render_marks_surface, render_pane_surface, render_summary_surface};
 
-use crate::tracker::TimeData;
 use crate::tui::types::{InputMode, ViewMode};
 use crate::tui::{App, theme};
-use chrono::{Datelike, Duration};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph, Tabs},
+    widgets::{Block, Borders, Paragraph},
 };
 use std::rc::Rc;
 
@@ -37,7 +36,6 @@ enum LayoutRow {
     Status,
     Marks,
     Panes,
-    Tabs,
     Search,
     Content,
     Summary,
@@ -86,7 +84,6 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     if pane_height > 0 {
         plan.push((LayoutRow::Panes, Constraint::Length(pane_height)));
     }
-    plan.push((LayoutRow::Tabs, Constraint::Length(3))); // Tabs + date info
     if app.is_searching() {
         plan.push((LayoutRow::Search, Constraint::Length(3)));
     }
@@ -141,49 +138,6 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     if let Some(area) = rows.get(LayoutRow::Panes) {
         render_pane_surface(f, app, area);
     }
-
-    let tab_titles = vec!["[1] Day", "[2] Week", "[3] Month", "[4] Year", "[5] All"];
-    let selected_tab = match app.view_mode {
-        ViewMode::Day => 0,
-        ViewMode::Week => 1,
-        ViewMode::Month => 2,
-        ViewMode::Year => 3,
-        ViewMode::All => 4,
-    };
-    let date_info = match app.view_mode {
-        ViewMode::All => "All entries".to_string(),
-        ViewMode::Day => app.selected_date.format("%A, %B %d, %Y").to_string(),
-        ViewMode::Week => {
-            let week_start = TimeData::week_start(app.selected_date);
-            let week_end = week_start + Duration::days(6);
-            format!(
-                "{} - {}",
-                week_start.format("%b %d"),
-                week_end.format("%b %d, %Y")
-            )
-        }
-        ViewMode::Month => app.selected_date.format("%B %Y").to_string(),
-        ViewMode::Year => format!("Year {}", app.selected_date.year()),
-    };
-    let tabs = Tabs::new(tab_titles)
-        .select(selected_tab)
-        .style(Style::default().fg(theme::inactive()))
-        .highlight_style(Style::default().fg(theme::accent()).bold())
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme::border()))
-                .title(Span::styled(
-                    format!(
-                        " {} | {} | {} ",
-                        app.view_mode.title(),
-                        date_info,
-                        app.sort_order.label()
-                    ),
-                    Style::default().fg(theme::highlight()),
-                )),
-        );
-    f.render_widget(tabs, rows.area(LayoutRow::Tabs));
 
     if let Some(area) = rows.get(LayoutRow::Search) {
         render_search_bar(f, app, area);

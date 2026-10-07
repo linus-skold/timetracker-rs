@@ -2015,7 +2015,7 @@ mod tests {
         assert!(screen.contains("-tt"), "no `-tt` pane row:\n{screen}");
         assert!(screen.contains("•impl"), "no `•impl` pane row:\n{screen}");
         assert!(
-            screen.contains("Entries [filtered: -(tt) #impl]"),
+            screen.contains("[filtered: -(tt) #impl]"),
             "the title does not show the exclusion:\n{screen}"
         );
     }
@@ -3571,7 +3571,7 @@ mod tests {
         sandbox("year-view-height");
         let mut app = year_view_2026();
 
-        let (_, short) = heat_block_cells(&mut app, 140, 20);
+        let (_, short) = heat_block_cells(&mut app, 140, 21);
         let (_, tall) = heat_block_cells(&mut app, 140, 40);
         assert!(
             tall.len() > short.len(),
@@ -3635,9 +3635,10 @@ mod tests {
         (ticks, rows.into_iter().map(|(_, cells)| cells).collect())
     }
 
-    /// The tabs read in period order, shortest first, with `All` last.
+    /// The selector reads in period order, shortest first, with `All` last, on the
+    /// line under the Entries title.
     #[test]
-    fn the_tabs_row_lists_the_five_views_in_period_order() {
+    fn the_selector_line_lists_the_five_views_in_period_order() {
         let _guard = env_guard();
         sandbox("tabs-period-order");
         seed(vec![], 0);
@@ -3650,7 +3651,7 @@ mod tests {
         let tabs = screen
             .iter()
             .find(|line| line.contains("[1] Day"))
-            .unwrap_or_else(|| panic!("no tabs row:\n{}", screen.join("\n")))
+            .unwrap_or_else(|| panic!("no selector line:\n{}", screen.join("\n")))
             .clone();
 
         let order: Vec<usize> = ["[1] Day", "[2] Week", "[3] Month", "[4] Year", "[5] All"]
@@ -3665,13 +3666,42 @@ mod tests {
             "the tabs are out of period order: {tabs}"
         );
 
+        let titled: Vec<usize> = (0..screen.len())
+            .filter(|&i| screen[i].contains("Monthly View"))
+            .collect();
+        assert_eq!(titled.len(), 1, "Month title count:\n{}", screen.join("\n"));
+        let title = &screen[titled[0]];
+        assert!(
+            title.contains("Entries: Monthly View") && title.contains("June 2026"),
+            "the Entries title does not name its month: {title}"
+        );
+        assert!(
+            screen[titled[0] + 1].contains("[1] Day"),
+            "the selector is not directly under the title:\n{}",
+            screen.join("\n")
+        );
+    }
+
+    #[test]
+    fn the_heat_box_carries_the_selector_line_under_its_title() {
+        let _guard = env_guard();
+        sandbox("heat-selector-line");
+        seed(vec![], 0);
+
+        let mut app = App::new().unwrap();
+        app.view_mode = ViewMode::Month;
+        app.heat_view = true;
+        app.selected_date = NaiveDate::from_ymd_opt(2026, 6, 15).unwrap();
+
+        let screen = frame_lines(&mut app, 140, 24);
         let title = screen
             .iter()
-            .find(|line| line.contains("Monthly View"))
-            .unwrap_or_else(|| panic!("no Month title:\n{}", screen.join("\n")));
+            .position(|line| line.contains("Heatmap: Monthly View") && line.contains("June 2026"))
+            .unwrap_or_else(|| panic!("no Heatmap title:\n{}", screen.join("\n")));
         assert!(
-            title.contains("June 2026"),
-            "the Month tab does not name its month: {title}"
+            screen[title + 1].contains("[1] Day"),
+            "the selector is not directly under the title:\n{}",
+            screen.join("\n")
         );
     }
 
@@ -5351,7 +5381,7 @@ mod tests {
             app.view_mode = view;
 
             app.heat_view = false;
-            // The column header, not the title: `All Entries` names the tabs row too.
+            // The column header, not the title: `All Entries` is in the box title too.
             let border = bottom_border(&mut app, "Description", 120, 40);
             assert!(
                 border.contains("\u{2514} M: heatmap"),

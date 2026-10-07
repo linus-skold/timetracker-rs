@@ -1,6 +1,7 @@
 use super::columns::EntryColumn;
 use super::legend::content_legend;
 use super::overlay::CURSOR_MARKER;
+use super::view_header::{content_title, render_view_selector};
 use crate::tracker::TimeData;
 use crate::tui::panes::Polarity;
 use crate::tui::rows::{GroupHeader, Member, VisibleRow};
@@ -357,6 +358,7 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
 
     // `(tt)` and `#impl`, the CLI's own sigils, so the title needs no legend;
     // an excluded value carries a `-` prefix.
+    let base_title = content_title(app, "Entries", app.sort_order.label());
     let title = if app.is_filtering() {
         let negate = |p: Polarity| if p == Polarity::Exclude { "-" } else { "" };
         let values: Vec<String> = app
@@ -369,9 +371,13 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
                     .map(|(v, p)| format!("{}#{}", negate(p), v)),
             )
             .collect();
-        format!(" Entries [filtered: {}] ", values.join(" "))
+        format!(
+            "{} [filtered: {}] ",
+            base_title.trim_end(),
+            values.join(" ")
+        )
     } else {
-        " Entries ".to_string()
+        base_title
     };
 
     let focused = app.focus == Focus::Table;
@@ -404,10 +410,12 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
         .collect();
     let table = Table::new(rows, widths)
         .header(header_row)
-        .block(block)
         .row_highlight_style(Style::default().bg(theme::selected_bg()))
         .highlight_symbol(CURSOR_MARKER);
 
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let table_area = render_view_selector(f, app, inner);
     let mut render_state = TableState::default().with_selected(visual_selected);
-    f.render_stateful_widget(table, area, &mut render_state);
+    f.render_stateful_widget(table, table_area, &mut render_state);
 }
