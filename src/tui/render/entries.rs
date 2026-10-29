@@ -1,4 +1,5 @@
 use super::columns::EntryColumn;
+use super::entry_scroll::{clamp_offset, reveal_group_offset};
 use super::legend::content_legend;
 use super::overlay::CURSOR_MARKER;
 use super::view_header::{content_title, render_view_selector};
@@ -351,6 +352,7 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     }
+    let visual_row_count = rows.len();
     let visual_selected = app
         .table_state
         .selected()
@@ -416,6 +418,18 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
     let table_area = render_view_selector(f, app, inner);
-    let mut render_state = TableState::default().with_selected(visual_selected);
+    // The header takes one line of the table area.
+    let viewport = usize::from(table_area.height.saturating_sub(1));
+    let mut offset = clamp_offset(app.entry_scroll_offset, visual_row_count, viewport);
+    if std::mem::take(&mut app.reveal_group_members)
+        && let (Some(group_row), Some(VisibleRow::GroupHeader(header))) =
+            (visual_selected, app.selected_row())
+    {
+        offset = reveal_group_offset(offset, group_row, header.members.len(), viewport);
+    }
+    let mut render_state = TableState::default()
+        .with_selected(visual_selected)
+        .with_offset(offset);
     f.render_stateful_widget(table, table_area, &mut render_state);
+    app.entry_scroll_offset = render_state.offset();
 }

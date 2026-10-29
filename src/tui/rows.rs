@@ -156,6 +156,7 @@ impl App {
             Some(VisibleRow::GroupHeader(header)) => {
                 if !self.expanded_issues.remove(&header.tag) {
                     self.expanded_issues.insert(header.tag);
+                    self.reveal_group_members = true;
                 }
             }
             Some(VisibleRow::Entry {
