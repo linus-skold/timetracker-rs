@@ -2253,8 +2253,13 @@ mod tests {
         app.previous();
         assert_eq!(app.selected_entry().map(|e| e.id), Some(ids[0]));
         app.previous();
-        assert_eq!(app.selected_entry().map(|e| e.id), Some(ids[2]));
+        assert_eq!(app.selected_entry().map(|e| e.id), Some(ids[0]));
         app.next();
+        app.next();
+        app.next();
+        assert_eq!(app.selected_entry().map(|e| e.id), Some(ids[2]));
+        app.previous();
+        app.previous();
         assert_eq!(app.selected_entry().map(|e| e.id), Some(ids[0]));
         assert!(app.input_mode == InputMode::Detail, "traversal closed it");
 

@@ -1,6 +1,7 @@
 //! The Entries table scrolls only when the cursor leaves the page.
 
 use super::App;
+use super::keys::handle_key;
 use super::rows::VisibleRow;
 use super::tests::frame_lines;
 use super::types::ViewMode;
@@ -8,6 +9,7 @@ use crate::storage::env_guard;
 use crate::storage::env_sandbox as sandbox;
 use crate::tracker::{TimeData, TimeEntry};
 use chrono::{Duration, Local};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const WIDTH: u16 = 120;
 const HEIGHT: u16 = 14;
@@ -34,18 +36,31 @@ fn entry_at(id: u64, description: String, tag: Option<&str>, minutes: i64) -> Ti
 }
 
 /// A Day view app with `loose` loose entries and `members` entries on `tt/8`.
+/// The group is the oldest, so it sorts to the bottom.
 fn app_with(name: &str, loose: u64, members: u64) -> App {
+    seeded_app(name, ViewMode::Day, loose, members, 0)
+}
+
+/// Newest first: `newer` loose entries, then the group of `members`, then
+/// `older` loose entries.
+fn seeded_app(name: &str, view: ViewMode, newer: u64, members: u64, older: u64) -> App {
     sandbox(name);
-    let mut entries: Vec<TimeEntry> = (0..loose)
-        .map(|i| entry_at(i, format!("row-{i:02}"), None, (members + i) as i64 * 10))
+    let loose = newer + older;
+    let mut entries: Vec<TimeEntry> = (0..newer)
+        .map(|i| {
+            let minutes = (older + members + i) as i64 * 10;
+            entry_at(i, format!("row-{i:02}"), None, minutes)
+        })
         .collect();
-    // The group is the oldest, so it sorts to the bottom.
+    entries.extend(
+        (0..older).map(|i| entry_at(newer + i, format!("row-old-{i:02}"), None, i as i64 * 10)),
+    );
     entries.extend((0..members).map(|i| {
         entry_at(
             loose + i,
             format!("mem-{i:02}"),
             Some("tt/8"),
-            i as i64 * 10,
+            (older + i) as i64 * 10,
         )
     }));
     let next_id = entries.len() as u64;
@@ -56,8 +71,17 @@ fn app_with(name: &str, loose: u64, members: u64) -> App {
     })
     .unwrap();
     let mut app = App::new().unwrap();
-    app.view_mode = ViewMode::Day;
+    app.view_mode = view;
     app
+}
+
+fn press_key(app: &mut App, code: KeyCode) {
+    handle_key(app, KeyEvent::new(code, KeyModifiers::NONE)).unwrap();
+}
+
+/// The index of the drawn line holding `needle`, among the body lines.
+fn line_of(lines: &[String], needle: &str) -> usize {
+    lines.iter().position(|l| l.contains(needle)).expect(needle)
 }
 
 fn is_body_line(line: &str) -> bool {
@@ -157,4 +181,84 @@ fn a_group_longer_than_the_page_keeps_its_row_at_the_top() {
     let after = body(&mut app);
 
     assert!(after[0].contains("tt/8"), "group row is not the top row");
+}
+
+/// Walk to the group as a user does, one drawn frame after each key.
+fn walk_to_group_drawing(app: &mut App) {
+    body(app);
+    for _ in 0..app.selectable_len() {
+        if matches!(app.selected_row(), Some(VisibleRow::GroupHeader(_))) {
+            return;
+        }
+        press_key(app, KeyCode::Char('j'));
+        body(app);
+    }
+    panic!("no group header reached");
+}
+
+/// Open the group with `key` and return how far its row moved up.
+fn rows_the_group_moved_up(app: &mut App, key: KeyCode) -> usize {
+    walk_to_group_drawing(app);
+    open_drawn_group_and_measure(app, key)
+}
+
+/// As [`rows_the_group_moved_up`], with the cursor already on a drawn group.
+fn open_drawn_group_and_measure(app: &mut App, key: KeyCode) -> usize {
+    let before = line_of(&body(app), "tt/8");
+    press_key(app, key);
+    let after = body(app);
+    assert_eq!(
+        line_of(&after, "mem-00"),
+        after.len() - 1,
+        "the last child is not on the bottom line"
+    );
+    before - line_of(&after, "tt/8")
+}
+
+#[test]
+fn week_view_opening_the_last_group_moves_it_up_by_its_children() {
+    let _guard = env_guard();
+    let mut app = seeded_app("scroll-week-a", ViewMode::Week, 30, 3, 0);
+    for key in [KeyCode::Enter, KeyCode::Char('g')] {
+        app.expanded_issues.clear();
+        assert_eq!(rows_the_group_moved_up(&mut app, key), 3);
+    }
+}
+
+#[test]
+fn week_view_opening_the_second_last_group_moves_it_up_by_two() {
+    let _guard = env_guard();
+    let mut app = seeded_app("scroll-week-b", ViewMode::Week, 30, 3, 1);
+    // Go to the last row, then up once: the group is second from the bottom.
+    select_last(&mut app);
+    body(&mut app);
+    press_key(&mut app, KeyCode::Char('k'));
+    assert!(matches!(
+        app.selected_row(),
+        Some(VisibleRow::GroupHeader(_))
+    ));
+    assert_eq!(open_drawn_group_and_measure(&mut app, KeyCode::Enter), 2);
+}
+
+#[test]
+fn week_view_a_group_that_already_fits_does_not_scroll() {
+    let _guard = env_guard();
+    let mut app = seeded_app("scroll-week-fits", ViewMode::Week, 0, 3, 0);
+    walk_to_group_drawing(&mut app);
+    let before = body(&mut app);
+    press_key(&mut app, KeyCode::Enter);
+    let after = body(&mut app);
+    assert_eq!(line_of(&before, "tt/8"), line_of(&after, "tt/8"));
+}
+
+#[test]
+fn down_on_the_last_row_and_up_on_the_first_row_stay_put() {
+    let _guard = env_guard();
+    let mut app = app_with("scroll-no-wrap", 5, 0);
+    press_key(&mut app, KeyCode::Char('k'));
+    assert_eq!(app.table_state.selected(), Some(0));
+    select_last(&mut app);
+    let last = app.table_state.selected();
+    press_key(&mut app, KeyCode::Char('j'));
+    assert_eq!(app.table_state.selected(), last);
 }

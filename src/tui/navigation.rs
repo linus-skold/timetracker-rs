@@ -142,7 +142,7 @@ impl App {
             return;
         }
         let i = match self.table_state.selected() {
-            Some(i) => (i + 1) % len,
+            Some(i) => (i + 1).min(len - 1),
             None => 0,
         };
         self.table_state.select(Some(i));
@@ -154,13 +154,7 @@ impl App {
             return;
         }
         let i = match self.table_state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    len - 1
-                } else {
-                    i - 1
-                }
-            }
+            Some(i) => i.saturating_sub(1),
             None => 0,
         };
         self.table_state.select(Some(i));
