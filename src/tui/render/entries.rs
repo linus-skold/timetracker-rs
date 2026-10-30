@@ -187,6 +187,9 @@ fn day_header_cell(
     }
 }
 
+/// Lines a day header takes; every other row takes one.
+const DAY_HEADER_HEIGHT: u16 = 2;
+
 fn day_header_row(columns: &[EntryColumn], date: NaiveDate, total: Duration) -> Row<'static> {
     let weekday = format!("\n{}", date.format("%A"));
     let date_str = format!("\n{}", date.format("%B %d, %Y"));
@@ -199,7 +202,7 @@ fn day_header_row(columns: &[EntryColumn], date: NaiveDate, total: Duration) -> 
     cells.push(Cell::from(""));
 
     Row::new(cells)
-        .height(2)
+        .height(DAY_HEADER_HEIGHT)
         .style(Style::default().bg(theme::day_header_bg()))
 }
 
@@ -317,6 +320,8 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
     let model = app.rows();
     let mut rows: Vec<Row> = Vec::with_capacity(model.len());
     let mut visual_of_selectable: Vec<usize> = Vec::with_capacity(model.len());
+    // Line height of each visual row, for the scroll maths.
+    let mut heights: Vec<usize> = Vec::with_capacity(model.len());
     let mut stripe = false;
     for row in &model {
         match row {
@@ -325,9 +330,11 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
                 stripe = false;
                 let total = day_totals.get(date).copied().unwrap_or_else(Duration::zero);
                 rows.push(day_header_row(&app.entry_columns, *date, total));
+                heights.push(usize::from(DAY_HEADER_HEIGHT));
             }
             VisibleRow::GroupHeader(header) => {
                 visual_of_selectable.push(rows.len());
+                heights.push(1);
                 rows.push(group_header_row(
                     &app.entry_columns,
                     header,
@@ -337,6 +344,7 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
             VisibleRow::Entry { index, member } => {
                 if let Some(entry) = app.data.entries.get(*index) {
                     visual_of_selectable.push(rows.len());
+                    heights.push(1);
                     rows.push(entry_row(
                         &app.entry_columns,
                         entry,
@@ -352,7 +360,6 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
             }
         }
     }
-    let visual_row_count = rows.len();
     let visual_selected = app
         .table_state
         .selected()
@@ -420,12 +427,12 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
     let table_area = render_view_selector(f, app, inner);
     // The header takes one line of the table area.
     let viewport = usize::from(table_area.height.saturating_sub(1));
-    let mut offset = clamp_offset(app.entry_scroll_offset, visual_row_count, viewport);
+    let mut offset = clamp_offset(app.entry_scroll_offset, &heights, viewport);
     if std::mem::take(&mut app.reveal_group_members)
         && let (Some(group_row), Some(VisibleRow::GroupHeader(header))) =
             (visual_selected, app.selected_row())
     {
-        offset = reveal_group_offset(offset, group_row, header.members.len(), viewport);
+        offset = reveal_group_offset(offset, group_row, header.members.len(), &heights, viewport);
     }
     let mut render_state = TableState::default()
         .with_selected(visual_selected)

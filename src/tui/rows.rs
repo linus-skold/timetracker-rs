@@ -155,8 +155,14 @@ impl App {
         match self.selected_row() {
             Some(VisibleRow::GroupHeader(header)) => {
                 if !self.expanded_issues.remove(&header.tag) {
+                    let anchor = self.cursor_anchor();
                     self.expanded_issues.insert(header.tag);
                     self.reveal_group_members = true;
+                    // The tag opens on every day, which shifts this header's index.
+                    let moved_to = anchor.and_then(|a| self.selectable_index_for(&a));
+                    if let Some(idx) = moved_to {
+                        self.table_state.select(Some(idx));
+                    }
                 }
             }
             Some(VisibleRow::Entry {

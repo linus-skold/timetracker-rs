@@ -8,7 +8,7 @@ use super::types::ViewMode;
 use crate::storage::env_guard;
 use crate::storage::env_sandbox as sandbox;
 use crate::tracker::{TimeData, TimeEntry};
-use chrono::{Duration, Local};
+use chrono::{Datelike, Duration, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 const WIDTH: u16 = 120;
@@ -243,12 +243,98 @@ fn week_view_opening_the_second_last_group_moves_it_up_by_two() {
 #[test]
 fn week_view_a_group_that_already_fits_does_not_scroll() {
     let _guard = env_guard();
-    let mut app = seeded_app("scroll-week-fits", ViewMode::Week, 0, 3, 0);
+    let mut app = seeded_app("scroll-week-fits", ViewMode::Week, 0, 2, 0);
     walk_to_group_drawing(&mut app);
-    let before = body(&mut app);
+    assert!(day_header_is_drawn(&mut app), "no day header to start with");
+    press_key(&mut app, KeyCode::Enter);
+    assert!(day_header_is_drawn(&mut app), "the view scrolled");
+}
+
+/// Whether the two-line day header of today is on screen.
+fn day_header_is_drawn(app: &mut App) -> bool {
+    let day = Local::now().format("%A").to_string();
+    frame_lines(app, WIDTH, HEIGHT)
+        .iter()
+        .any(|line| line.contains(&day))
+}
+
+#[test]
+fn week_view_counts_a_two_line_day_header_when_a_group_opens() {
+    let _guard = env_guard();
+    // Day header (2 lines), group, 3 members: 6 lines in a 5-line page.
+    let mut app = seeded_app("scroll-week-header-height", ViewMode::Week, 0, 3, 0);
+    walk_to_group_drawing(&mut app);
     press_key(&mut app, KeyCode::Enter);
     let after = body(&mut app);
-    assert_eq!(line_of(&before, "tt/8"), line_of(&after, "tt/8"));
+    assert_eq!(line_of(&after, "mem-00"), after.len() - 1);
+    assert!(after[0].contains("tt/8"), "the group row left the view");
+}
+
+/// Two days with a group on each, both on `tt/8`; the other day is a
+/// neighbour inside the same week.
+fn two_day_group_app(name: &str) -> App {
+    let app = seeded_app(name, ViewMode::Week, 0, 2, 0);
+    let mut data = app.data.clone();
+    let delta = if Local::now().weekday() == chrono::Weekday::Mon {
+        1
+    } else {
+        -1
+    };
+    let other_day: Vec<TimeEntry> = data
+        .entries
+        .iter()
+        .map(|e| {
+            let mut copy = e.clone();
+            copy.id += 100;
+            copy.description = format!("old-{}", e.description);
+            copy.start_time += Duration::days(delta);
+            copy.end_time = copy.end_time.map(|t| t + Duration::days(delta));
+            copy
+        })
+        .collect();
+    data.entries.extend(other_day);
+    data.next_id = 200;
+    crate::storage::save_data(&data).unwrap();
+    let mut app = App::new().unwrap();
+    app.view_mode = ViewMode::Week;
+    app
+}
+
+#[test]
+fn week_view_opening_the_later_day_group_keeps_the_cursor_on_its_header() {
+    let _guard = env_guard();
+    let mut app = two_day_group_app("scroll-week-two-days");
+    let last_header = app
+        .rows()
+        .iter()
+        .filter(|row| !matches!(row, VisibleRow::DayHeader { .. }))
+        .enumerate()
+        .filter(|(_, row)| matches!(row, VisibleRow::GroupHeader(_)))
+        .map(|(idx, _)| idx)
+        .last()
+        .expect("two group headers");
+    app.table_state.select(Some(last_header));
+    let date_of = |app: &App| match app.selected_row() {
+        Some(VisibleRow::GroupHeader(header)) => header.start.date_naive(),
+        _ => panic!("the cursor left a group header"),
+    };
+    let before = date_of(&app);
+
+    press_key(&mut app, KeyCode::Enter);
+
+    assert_eq!(date_of(&app), before);
+}
+
+#[test]
+fn week_view_a_header_near_the_bottom_keeps_the_view_when_moving_up() {
+    let _guard = env_guard();
+    let mut app = two_day_group_app("scroll-week-sticky-header");
+    app.expanded_issues.insert("tt/8".to_string());
+    select_last(&mut app);
+    let before = body(&mut app);
+    press_key(&mut app, KeyCode::Char('k'));
+    let after = body(&mut app);
+    assert_eq!(before.first(), after.first(), "the view scrolled");
 }
 
 #[test]
