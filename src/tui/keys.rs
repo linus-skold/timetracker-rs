@@ -602,11 +602,13 @@ mod tests {
         let mut app = App::new().unwrap();
         app.table_state.select(Some(0));
 
-        // Collapsed: the header and the loose entry, and `j` wraps over two.
+        // Collapsed: the header and the loose entry, and `j` stops at the end.
         assert_eq!(app.selectable_len(), 2);
         press(&mut app, KeyCode::Char('j'));
         assert_eq!(app.table_state.selected(), Some(1));
         press(&mut app, KeyCode::Char('j'));
+        assert_eq!(app.table_state.selected(), Some(1));
+        press(&mut app, KeyCode::Char('k'));
         assert_eq!(app.table_state.selected(), Some(0));
 
         app.expanded_issues.insert("tt/174".to_string());

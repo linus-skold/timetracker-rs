@@ -26,6 +26,8 @@ mod onboarding;
 mod panes;
 mod render;
 mod rows;
+#[cfg(test)]
+mod scroll_tests;
 mod search;
 mod summary;
 mod text_input;
@@ -127,6 +129,12 @@ pub(crate) struct App {
     /// How far `heat_scroll` may go, as the last frame worked it out. The
     /// renderer owns the clamp; `j`/`k` only read the limit back.
     pub(crate) heat_scroll_max: usize,
+    /// First visual row of the Entries table in view. Session state: the
+    /// renderer stores what the table computed, so the view scrolls only when
+    /// the cursor leaves it.
+    pub(crate) entry_scroll_offset: usize,
+    /// Set when a group opens; the next frame scrolls its members into view.
+    pub(crate) reveal_group_members: bool,
     /// What `Tab` has given focus to, and where each pane's cursor rests.
     pub(crate) focus: Focus,
     pub(crate) project_cursor: usize,
@@ -239,6 +247,8 @@ impl App {
             summary_heat: layout.summary_heat.unwrap_or(false),
             heat_scroll: 0,
             heat_scroll_max: 0,
+            entry_scroll_offset: 0,
+            reveal_group_members: false,
             focus: Focus::Table,
             project_cursor: 0,
             tag_cursor: 0,
@@ -2243,8 +2253,13 @@ mod tests {
         app.previous();
         assert_eq!(app.selected_entry().map(|e| e.id), Some(ids[0]));
         app.previous();
-        assert_eq!(app.selected_entry().map(|e| e.id), Some(ids[2]));
+        assert_eq!(app.selected_entry().map(|e| e.id), Some(ids[0]));
         app.next();
+        app.next();
+        app.next();
+        assert_eq!(app.selected_entry().map(|e| e.id), Some(ids[2]));
+        app.previous();
+        app.previous();
         assert_eq!(app.selected_entry().map(|e| e.id), Some(ids[0]));
         assert!(app.input_mode == InputMode::Detail, "traversal closed it");
 
@@ -2608,7 +2623,7 @@ mod tests {
     }
 
     /// One rendered frame as lines of text, so assertions read the real screen.
-    fn frame_lines(app: &mut App, width: u16, height: u16) -> Vec<String> {
+    pub(super) fn frame_lines(app: &mut App, width: u16, height: u16) -> Vec<String> {
         let mut terminal =
             Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
         terminal.draw(|f| render::ui(f, app)).unwrap();

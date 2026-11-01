@@ -4,6 +4,7 @@
 mod column_picker;
 pub(crate) mod columns;
 mod entries;
+mod entry_scroll;
 mod form;
 mod heat;
 mod legend;
