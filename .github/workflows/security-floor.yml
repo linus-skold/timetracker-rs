@@ -1,0 +1,15 @@
+# Server-side security floor: deterministic checks a local bypass can't skip.
+# Pinned to a commit of andreasheige/security-floor; bump the SHA deliberately.
+name: security-floor
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  floor:
+    uses: andreasheige/security-floor/.github/workflows/floor.yml@1c85f67c2c5a914bca588b44868467be08f1fccb
