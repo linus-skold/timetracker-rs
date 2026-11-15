@@ -247,3 +247,20 @@ fn today_prints_a_table_of_uuid_title_span_and_duration() {
     run.assert_stdout_has(&format!("{}– active", start(&second).format("%H:%M")));
     run.assert_stdout_has("Total:");
 }
+
+#[test]
+fn idle_outside_the_entry_or_backwards_is_refused() {
+    let case = seeded("edit-idle-bounds");
+    let before = shown(&case, "1");
+    let now = common::now();
+    let gap = |from: i64, to: i64| json!({"idle": [{"start": common::stamp(from), "end": common::stamp(to)}]});
+
+    let backwards = edit(&case, Some("1"), &gap(now - 95, now - 100));
+    let before_start = edit(&case, Some("1"), &gap(now - 200, now - 100));
+    let after_end = edit(&case, Some("1"), &gap(now - 100, now - 10));
+
+    for run in [&backwards, &before_start, &after_end] {
+        assert_edit_fails(run, "idle interval");
+    }
+    assert_eq!(shown(&case, "1"), before);
+}

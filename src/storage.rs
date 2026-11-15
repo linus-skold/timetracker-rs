@@ -105,6 +105,8 @@ pub fn with_data<T>(edit: impl FnOnce(&mut tracker::TimeData) -> Result<T>) -> R
     let _lock = lock_data()?;
     let mut data = load_data()?;
     let result = edit(&mut data)?;
+    // No writer may persist a nil uuid, whatever it loaded.
+    data.fill_missing_uuids();
     save_data(&data)?;
     Ok(result)
 }

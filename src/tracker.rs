@@ -100,12 +100,9 @@ pub fn migrate(data: &mut TimeData) {
         }
         data.schema_version = 1;
     }
-    if data.schema_version < 2 {
-        for entry in data.entries.iter_mut().filter(|e| e.uuid.is_nil()) {
-            entry.uuid = Uuid::new_v4();
-        }
-        data.schema_version = 2;
-    }
+    // Every call: an older binary can save a v2 store without uuids.
+    data.fill_missing_uuids();
+    data.schema_version = data.schema_version.max(2);
 }
 
 /// Format tags for display (with # prefix), e.g. "#backend #bug"
@@ -413,6 +410,13 @@ impl TimeData {
         self.entries.iter().find(|e| e.id == id)
     }
 
+    /// Give every entry that has no uuid a fresh one. Idempotent.
+    pub fn fill_missing_uuids(&mut self) {
+        for entry in self.entries.iter_mut().filter(|e| e.uuid.is_nil()) {
+            entry.uuid = Uuid::new_v4();
+        }
+    }
+
     /// Index of the entry a user reference names: digits match `id`, anything
     /// else matches `uuid`, ignoring case.
     pub fn position_by_ref(&self, reference: &str) -> Option<usize> {
@@ -420,7 +424,7 @@ impl TimeData {
         if let Ok(id) = reference.parse::<u64>() {
             return self.entries.iter().position(|e| e.id == id);
         }
-        let uuid = Uuid::parse_str(reference).ok()?;
+        let uuid = Uuid::parse_str(reference).ok().filter(|u| !u.is_nil())?;
         self.entries.iter().position(|e| e.uuid == uuid)
     }
 

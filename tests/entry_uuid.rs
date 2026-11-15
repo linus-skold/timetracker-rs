@@ -127,3 +127,21 @@ fn show_fails_for_an_unknown_reference() {
         run.assert_stderr_has("no entry matches");
     }
 }
+
+#[test]
+fn a_version_2_store_missing_a_uuid_gets_one_and_the_nil_uuid_matches_nothing() {
+    let case = Case::new("uuid-v2-missing");
+    case.write_raw_store(&OLD_STORE.replace("\"schema_version\":0", "\"schema_version\":2"));
+
+    case.run_bare(&["show", "00000000-0000-0000-0000-000000000000"])
+        .assert_stderr_has("no entry matches");
+    case.run_bare(&["list"]).assert_status(0);
+
+    let all = uuids(&case);
+    assert_eq!(all.len(), 2);
+    assert_all_distinct(&all);
+    assert!(
+        all.iter()
+            .all(|u| u != "00000000-0000-0000-0000-000000000000")
+    );
+}

@@ -141,6 +141,13 @@ fn check_edited(data: &TimeData, index: usize, edited: &TimeEntry) -> Result<()>
     {
         bail!("end_time is before start_time");
     }
+    for gap in &edited.idle {
+        let inside =
+            gap.start >= edited.start_time && edited.end_time.is_none_or(|end| gap.end <= end);
+        if gap.end < gap.start || !inside {
+            bail!("idle interval must have end after start and lie inside the entry");
+        }
+    }
     let other_active = data
         .entries
         .iter()
