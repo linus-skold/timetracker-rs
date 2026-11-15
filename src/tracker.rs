@@ -1,5 +1,6 @@
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::duration;
 use crate::icons;
@@ -7,6 +8,9 @@ use crate::icons;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TimeEntry {
     pub id: u64,
+    /// Stable identity across stores. Nil only until `migrate` assigns one.
+    #[serde(default)]
+    pub uuid: Uuid,
     pub description: String,
     /// Project this entry belongs to, if known
     #[serde(default)]
@@ -85,17 +89,23 @@ pub fn infer_project(tags: &[String]) -> Option<String> {
         .cloned()
 }
 
-/// One-time migration: infer any missing `project`, then stamp schema version 1.
+/// Migrations, each run once: v1 infers any missing `project`, v2 gives every
+/// entry a `uuid`.
 pub fn migrate(data: &mut TimeData) {
-    if data.schema_version >= 1 {
-        return;
-    }
-    for entry in &mut data.entries {
-        if entry.project.is_none() {
-            entry.project = infer_project(&entry.tags);
+    if data.schema_version < 1 {
+        for entry in &mut data.entries {
+            if entry.project.is_none() {
+                entry.project = infer_project(&entry.tags);
+            }
         }
+        data.schema_version = 1;
     }
-    data.schema_version = 1;
+    if data.schema_version < 2 {
+        for entry in data.entries.iter_mut().filter(|e| e.uuid.is_nil()) {
+            entry.uuid = Uuid::new_v4();
+        }
+        data.schema_version = 2;
+    }
 }
 
 /// Format tags for display (with # prefix), e.g. "#backend #bug"
@@ -251,7 +261,7 @@ impl TimeEntry {
 pub struct TimeData {
     pub entries: Vec<TimeEntry>,
     pub next_id: u64,
-    /// Store schema version; an unversioned file reads as 0 and migrates to 1
+    /// Store schema version; an unversioned file reads as 0 and migrates to 2
     #[serde(default)]
     pub schema_version: u32,
 }
@@ -299,6 +309,7 @@ impl TimeData {
     ) -> &TimeEntry {
         let entry = TimeEntry {
             id: self.next_id,
+            uuid: uuid::Uuid::new_v4(),
             description,
             project,
             tags,
@@ -402,6 +413,21 @@ impl TimeData {
         self.entries.iter().find(|e| e.id == id)
     }
 
+    /// Index of the entry a user reference names: digits match `id`, anything
+    /// else matches `uuid`, ignoring case.
+    pub fn position_by_ref(&self, reference: &str) -> Option<usize> {
+        let reference = reference.trim();
+        if let Ok(id) = reference.parse::<u64>() {
+            return self.entries.iter().position(|e| e.id == id);
+        }
+        let uuid = Uuid::parse_str(reference).ok()?;
+        self.entries.iter().position(|e| e.uuid == uuid)
+    }
+
+    pub fn find_by_ref(&self, reference: &str) -> Option<&TimeEntry> {
+        self.position_by_ref(reference).map(|i| &self.entries[i])
+    }
+
     /// Split the entry with `id` on every idle interval it carries — the store
     /// mechanic behind the user-facing trim. Returns the pieces' ids, earliest
     /// first, or an empty vec when nothing changed.
@@ -446,6 +472,7 @@ impl TimeData {
                 self.next_id += 1;
                 self.entries.push(TimeEntry {
                     id: new_id,
+                    uuid: uuid::Uuid::new_v4(),
                     description: template.description.clone(),
                     project: template.project.clone(),
                     tags: template.tags.clone(),
@@ -471,6 +498,7 @@ mod tests {
 
     fn entry(id: u64, project: Option<&str>, entry_tags: &[&str]) -> TimeEntry {
         TimeEntry {
+            uuid: uuid::Uuid::new_v4(),
             id,
             description: format!("entry {}", id),
             project: project.map(|p| p.to_string()),
@@ -548,7 +576,7 @@ mod tests {
 
         migrate(&mut data);
 
-        assert_eq!(data.schema_version, 1);
+        assert_eq!(data.schema_version, 2);
         assert_eq!(data.entries[0].project.as_deref(), Some("tt"));
         assert_eq!(data.entries[1].project.as_deref(), Some("loremind"));
         assert_eq!(data.entries[2].project.as_deref(), Some("explicit"));
@@ -571,6 +599,7 @@ mod tests {
         TimeData {
             entries: vec![TimeEntry {
                 id: 7,
+                uuid: uuid::Uuid::new_v4(),
                 description: "logged span".to_string(),
                 project: Some("tt".to_string()),
                 tags: tags(&["tt", "tt/36"]),
@@ -766,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn a_store_written_before_idle_existed_loads_and_stays_at_schema_version_1() {
+    fn a_store_written_before_idle_existed_loads_and_only_gains_uuids_on_migrate() {
         let json = r#"{
             "entries": [
                 {
@@ -787,13 +816,13 @@ mod tests {
         assert!(data.entries[0].idle.is_empty(), "absent means empty");
         assert_eq!(data.entries[0].duration(), Duration::hours(1));
         migrate(&mut data);
-        assert_eq!(data.schema_version, 1, "no version bump, no migration");
+        assert_eq!(data.schema_version, 2, "only the uuid step runs");
 
         // …and round-trips unchanged.
         let round_tripped: TimeData =
             serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap();
         assert!(round_tripped.entries[0].idle.is_empty());
-        assert_eq!(round_tripped.schema_version, 1);
+        assert_eq!(round_tripped.schema_version, 2);
     }
 
     #[test]
@@ -874,6 +903,6 @@ mod tests {
         data.entries[0].tags = tags(&["tt", "impl"]);
         assert_eq!(serde_json::to_string(&data).unwrap(), after_first);
         assert_eq!(data.entries[0].project.as_deref(), Some("tt"));
-        assert_eq!(data.schema_version, 1);
+        assert_eq!(data.schema_version, 2);
     }
 }

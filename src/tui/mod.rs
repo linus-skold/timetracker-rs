@@ -453,6 +453,7 @@ mod tests {
 
     fn entry(id: u64, description: &str) -> TimeEntry {
         TimeEntry {
+            uuid: uuid::Uuid::new_v4(),
             id,
             description: description.to_string(),
             project: None,
@@ -991,6 +992,7 @@ mod tests {
             .and_local_timezone(Local)
             .unwrap();
         TimeEntry {
+            uuid: uuid::Uuid::new_v4(),
             id,
             description: description.to_string(),
             project: (!project.is_empty()).then(|| project.to_string()),
@@ -5737,6 +5739,7 @@ mod tests {
             vec![
                 TimeEntry {
                     id: 42,
+                    uuid: uuid::Uuid::new_v4(),
                     description: "wrote the migration".to_string(),
                     project: Some("loremind".to_string()),
                     tags: vec!["impl".to_string()],

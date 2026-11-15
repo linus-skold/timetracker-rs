@@ -7,9 +7,11 @@ use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime};
 use crate::completions;
 use crate::config;
 use crate::duration;
+use crate::entry_edit;
 use crate::icons;
 use crate::report;
 use crate::storage::{load_data, with_data};
+use crate::text_table;
 use crate::tracker::{IdleInterval, TimeEntry, format_tags, parse_tags};
 
 /// Print the completion hook for `eval` at shell startup. The hook embeds this
@@ -314,10 +316,49 @@ pub fn today() -> Result<()> {
     }
 
     println!("{} Today's entries:\n", icons::calendar());
-    for entry in &today_entries {
-        println!("{}", entry_line(entry, false));
-    }
+    let rows: Vec<Vec<String>> = today_entries.iter().map(|e| today_row(e)).collect();
+    println!(
+        "{}",
+        text_table::render(&["ID", "Title", "Start–End", "Duration"], &rows)
+    );
     println!("\nTotal: {}", duration::format(data.today_total()));
+    Ok(())
+}
+
+/// One `today` table row: uuid, description, `HH:MM–HH:MM` (open-ended while
+/// the entry runs) and duration.
+fn today_row(entry: &TimeEntry) -> Vec<String> {
+    let span = match entry.end_time {
+        Some(end) => format!("{}–{}", entry.format_start_time(), end.format("%H:%M")),
+        None => format!("{}– active", entry.format_start_time()),
+    };
+    vec![
+        entry.uuid.to_string(),
+        entry.description.clone(),
+        span,
+        entry.format_duration(),
+    ]
+}
+
+/// `tt show`: the entry as JSON, the shape `tt edit` accepts.
+pub fn show(reference: &str) -> Result<()> {
+    let data = load_data()?;
+    let entry = data
+        .find_by_ref(reference)
+        .ok_or_else(|| anyhow::anyhow!("no entry matches \"{reference}\""))?;
+    println!("{}", entry_edit::entry_json(entry)?);
+    Ok(())
+}
+
+/// `tt edit`: patch one entry under the store lock, then print it as `show` does.
+pub fn edit(reference: Option<&str>, raw_patch: &str) -> Result<()> {
+    let patch = entry_edit::parse_patch(raw_patch)?;
+    let printed = with_data(|data| {
+        let id = entry_edit::edit_entry(data, reference, &patch)?;
+        let entry = data.get_entry(id).expect("the entry just edited");
+        entry_edit::entry_json(entry)
+    })?;
+    println!("{printed}");
     Ok(())
 }
 

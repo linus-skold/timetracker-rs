@@ -276,6 +276,7 @@ mod tests {
 
     fn entry(id: u64, description: &str) -> TimeEntry {
         TimeEntry {
+            uuid: uuid::Uuid::new_v4(),
             id,
             description: description.to_string(),
             project: None,
@@ -576,6 +577,7 @@ mod tests {
     fn tagged(id: u64, description: &str, tags: &[&str], hours_ago: i64) -> TimeEntry {
         let start = Local::now() - chrono::Duration::hours(hours_ago);
         TimeEntry {
+            uuid: uuid::Uuid::new_v4(),
             id,
             description: description.to_string(),
             project: Some("tt".to_string()),
@@ -974,6 +976,7 @@ mod tests {
                         .and_local_timezone(Local)
                         .unwrap();
                     TimeEntry {
+                        uuid: uuid::Uuid::new_v4(),
                         id,
                         description: "seed".to_string(),
                         project: Some(format!("p{id}")),
@@ -1064,6 +1067,7 @@ mod tests {
                         .and_local_timezone(Local)
                         .unwrap();
                     TimeEntry {
+                        uuid: uuid::Uuid::new_v4(),
                         id,
                         description: "seed".to_string(),
                         project: Some(format!("p{id}")),

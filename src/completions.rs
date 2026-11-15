@@ -164,6 +164,7 @@ mod tests {
     fn entry(project: Option<&str>, tags: &[&str]) -> TimeEntry {
         TimeEntry {
             id: 0,
+            uuid: uuid::Uuid::new_v4(),
             description: String::new(),
             project: project.map(String::from),
             tags: tags.iter().map(|t| t.to_string()).collect(),

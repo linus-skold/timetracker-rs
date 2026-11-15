@@ -426,6 +426,7 @@ mod tests {
     fn entry(project: &str, start: i64, end: Option<i64>, tags: &[&str]) -> TimeEntry {
         TimeEntry {
             id: 1,
+            uuid: uuid::Uuid::new_v4(),
             description: "x".to_string(),
             project: Some(project.to_string()),
             tags: tags.iter().map(|t| t.to_string()).collect(),

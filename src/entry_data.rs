@@ -14,13 +14,19 @@ pub fn parse(raw: &str) -> Result<Option<Value>, String> {
     }
     let value: Value =
         serde_json::from_str(raw).map_err(|e| format!("invalid JSON: {}", first_line(&e)))?;
+    require_object(value).map(Some)
+}
+
+/// The shared shape check: data is an object or it is nothing. `tt edit` uses it
+/// for a JSON value that is already parsed.
+pub fn require_object(value: Value) -> Result<Value, String> {
     if !value.is_object() {
         return Err(format!(
             "expected a JSON object like {{\"key\": \"value\"}}, got {}",
             kind(&value)
         ));
     }
-    Ok(Some(value))
+    Ok(value)
 }
 
 /// Stamp `{"agent": {"label": <label>}}` into the caller's data, keeping every key

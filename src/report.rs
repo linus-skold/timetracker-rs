@@ -358,6 +358,7 @@ mod tests {
     ) -> TimeEntry {
         let start = at(from.0, from.1);
         TimeEntry {
+            uuid: uuid::Uuid::new_v4(),
             id,
             description: "did the thing".to_string(),
             project: project.map(str::to_string),

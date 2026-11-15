@@ -10,12 +10,14 @@ mod config;
 mod dismissed;
 mod duration;
 mod entry_data;
+mod entry_edit;
 mod icons;
 mod marks;
 mod paths;
 mod report;
 mod skill;
 mod storage;
+mod text_table;
 mod time;
 mod tracker;
 mod tui;
@@ -91,6 +93,8 @@ fn main() -> Result<()> {
             confirm_on_stderr: false,
         }),
         Commands::Today => commands::today(),
+        Commands::Show { entry } => commands::show(&entry),
+        Commands::Edit { entry, json } => commands::edit(entry.as_deref(), &json),
         Commands::Report {
             all,
             week,
@@ -147,6 +151,8 @@ fn needs_store_preamble(command: &Commands) -> bool {
         | Commands::Stop
         | Commands::Log { .. }
         | Commands::Today
+        | Commands::Show { .. }
+        | Commands::Edit { .. }
         | Commands::List { .. }
         | Commands::Tui
         | Commands::Status
@@ -172,6 +178,8 @@ mod tests {
             vec!["tt", "stop"],
             vec!["tt", "log", "-d", "x", "-t", "5m"],
             vec!["tt", "today"],
+            vec!["tt", "show", "1"],
+            vec!["tt", "edit", "1", "--json", "{}"],
             vec!["tt", "list"],
             vec!["tt", "tui"],
             vec!["tt", "status"],
