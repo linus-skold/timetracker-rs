@@ -11,6 +11,7 @@ mod legend;
 mod onboarding;
 mod overlay;
 mod popups;
+mod project_header;
 mod surfaces;
 mod view_header;
 

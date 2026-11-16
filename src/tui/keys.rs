@@ -96,6 +96,7 @@ fn normal(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char('a') => app.start_adding(),
         KeyCode::Char('e') => app.start_editing(),
         KeyCode::Char('g') => app.toggle_group_at_cursor(),
+        KeyCode::Char('p') => app.toggle_group_by_project(),
         KeyCode::Char('/') => app.start_search(),
         KeyCode::Char('1') => app.set_view_mode(ViewMode::Day),
         KeyCode::Char('2') => app.set_view_mode(ViewMode::Week),

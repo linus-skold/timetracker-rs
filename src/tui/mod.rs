@@ -24,6 +24,9 @@ mod marks_surface;
 mod navigation;
 mod onboarding;
 mod panes;
+mod project_rows;
+#[cfg(test)]
+mod project_rows_tests;
 mod render;
 mod rows;
 #[cfg(test)]
@@ -60,6 +63,11 @@ pub(crate) struct App {
     /// The item tags whose group header is expanded. Keyed on the tag alone, so
     /// in Week view an issue expands in every day it appears in.
     pub(crate) expanded_issues: std::collections::HashSet<String>,
+    /// Whether project header rows wrap each day partition's entries.
+    pub(crate) group_by_project: bool,
+    /// Projects whose header is collapsed. A set of the closed ones, so a new
+    /// project shows open, as in the layout the toggle is meant to give.
+    pub(crate) collapsed_projects: std::collections::HashSet<String>,
     pub(crate) table_state: TableState,
     pub(crate) should_quit: bool,
     pub(crate) view_mode: ViewMode,
@@ -206,6 +214,8 @@ impl App {
             pane_cache: RefCell::new(None),
             rows_cache: RefCell::new(None),
             expanded_issues: std::collections::HashSet::new(),
+            group_by_project: false,
+            collapsed_projects: std::collections::HashSet::new(),
             store_stamp,
             marks: Vec::new(),
             marks_stamp: None,
@@ -3359,7 +3369,7 @@ mod tests {
         app.input_mode = InputMode::Help;
         let help = frame_lines(&mut app, 100, 40).join("\n");
         assert!(
-            help.contains("toggle the issue group"),
+            help.contains("toggle the issue or project group"),
             "help popup:\n{help}"
         );
     }
