@@ -210,6 +210,19 @@ mod tests {
     }
 
     #[test]
+    fn projects_that_differ_only_in_case_complete_once() {
+        let _guard = crate::storage::env_guard();
+        crate::storage::env_sandbox("completions-case");
+        let mut stored = data(vec![entry(Some("x"), &[]), entry(Some("x"), &[])]);
+        stored.entries[0].project = Some("Project1".into());
+        stored.entries[1].project = Some("project1".into());
+        crate::storage::save_data(&stored).unwrap();
+
+        let names = project_names(&store(), &[mark("project1", None)]);
+        assert_eq!(names.into_iter().collect::<Vec<_>>(), ["project1"]);
+    }
+
+    #[test]
     fn nu_registration_calls_tt_by_name_and_attaches_the_completer() {
         let mut buf = Vec::new();
         Nu.write_registration("COMPLETE", "tt", "tt", "/abs/path/tt", &mut buf)

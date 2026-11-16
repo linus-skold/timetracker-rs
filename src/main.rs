@@ -13,6 +13,7 @@ mod entry_data;
 mod entry_edit;
 mod icons;
 mod marks;
+mod naming;
 mod paths;
 mod report;
 mod skill;

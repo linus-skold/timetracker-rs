@@ -297,7 +297,7 @@ fn read_mark(dir: &Path, name: &OsString) -> Option<Mark> {
     let start = read_start(&dir.join(name))?;
     let (project, issue, phase, agent) = split_key(name.to_str()?);
     Some(Mark {
-        project,
+        project: crate::naming::normalize_name(&project),
         issue,
         phase,
         agent,
@@ -357,7 +357,7 @@ pub fn mark_key(mark: MarkRef) -> String {
     let segment = crate::paths::sanitise_key;
     let mut key = format!(
         "{}.{}.{}",
-        segment(mark.project),
+        project_key(mark.project),
         segment(mark.issue),
         segment(mark.phase)
     );
@@ -692,6 +692,17 @@ mod tests {
         assert!(!beats_path(&dir, "b.9.impl").exists());
         assert!(!beats_path(&dir, "a.7.review").exists());
         assert_eq!(fs::read_dir(dir.join("beats")).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn a_mark_read_back_names_its_project_in_lowercase() {
+        let dir = sandbox("read-mixed-case");
+        write(&dir, "Project1.7.impl", "1000100\n");
+
+        let marks = open_marks_in(&dir);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].project, "project1");
+        assert_eq!(marks[0].issue.as_deref(), Some("7"));
     }
 
     #[test]

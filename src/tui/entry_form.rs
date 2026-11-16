@@ -1,6 +1,7 @@
 use super::App;
 use super::text_input::TextInput;
 use super::types::{InputField, InputMode, ViewMode};
+use crate::naming::{normalize_name, normalize_tags};
 use anyhow::Result;
 use chrono::{DateTime, Local, NaiveDate};
 
@@ -455,20 +456,18 @@ impl App {
 
     /// The project as typed, trimmed; an empty field means "no project".
     fn parse_project(&self) -> Option<String> {
-        let project = self.input_project.value().trim();
-        if project.is_empty() {
-            None
-        } else {
-            Some(project.to_string())
-        }
+        let project = normalize_name(self.input_project.value());
+        (!project.is_empty()).then_some(project)
     }
 
     fn parse_tags(&self) -> Vec<String> {
-        self.input_tags
-            .value()
-            .split_whitespace()
-            .map(|s| s.trim_start_matches('#').to_string())
-            .filter(|s| !s.is_empty())
-            .collect()
+        normalize_tags(
+            self.input_tags
+                .value()
+                .split_whitespace()
+                .map(|s| s.trim_start_matches('#').to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
+        )
     }
 }

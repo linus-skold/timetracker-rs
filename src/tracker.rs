@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 use crate::duration;
 use crate::icons;
+use crate::naming::{normalize_name, normalize_project, normalize_tags};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TimeEntry {
@@ -64,7 +65,7 @@ pub fn parse_tags(text: &str) -> (String, Vec<String>) {
     for word in text.split_whitespace() {
         if word.starts_with('#') && word.len() > 1 {
             // Remove the # prefix and add to tags
-            tags.push(word[1..].to_string());
+            tags.push(normalize_name(&word[1..]));
         } else {
             clean_parts.push(word);
         }
@@ -308,8 +309,8 @@ impl TimeData {
             id: self.next_id,
             uuid: uuid::Uuid::new_v4(),
             description,
-            project,
-            tags,
+            project: normalize_project(project),
+            tags: normalize_tags(tags),
             start_time,
             end_time,
             idle: Vec::new(),
@@ -382,8 +383,8 @@ impl TimeData {
     ) -> bool {
         if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
             entry.description = description;
-            entry.project = project;
-            entry.tags = tags;
+            entry.project = normalize_project(project);
+            entry.tags = normalize_tags(tags);
             entry.start_time = start_time;
             entry.end_time = end_time;
             true

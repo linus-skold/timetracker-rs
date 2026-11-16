@@ -9,6 +9,7 @@ use crate::config;
 use crate::duration;
 use crate::entry_edit;
 use crate::icons;
+use crate::naming::{normalize_project, normalize_tags};
 use crate::report;
 use crate::storage::{load_data, with_data};
 use crate::text_table;
@@ -139,6 +140,7 @@ pub fn start(
 ) -> Result<()> {
     let raw_desc = description.join(" ");
     let (desc, tags) = parse_tags(&raw_desc);
+    let project = normalize_project(project);
     let now = Local::now();
     let start_time = match started_at {
         Some(clock) => resolve_start(clock, now)?,
@@ -254,7 +256,8 @@ pub fn log(request: LogRequest) -> Result<()> {
     crate::entry_edit::check_idle_within(start_time, Some(end_time), &idle)?;
 
     let (desc, mut tags) = parse_tags(&description);
-    for tag in extra_tags {
+    let project = normalize_project(project);
+    for tag in normalize_tags(extra_tags) {
         if !tags.contains(&tag) {
             tags.push(tag);
         }
