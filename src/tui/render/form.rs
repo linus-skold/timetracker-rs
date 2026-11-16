@@ -158,7 +158,9 @@ fn form_viewport(height: u16, active: usize) -> FormViewport {
 
 pub(super) fn render_entry_form(f: &mut Frame, app: &App, area: Rect) {
     let is_editing = app.input_mode == InputMode::EditingEntry;
-    let form_title = if is_editing {
+    let form_title = if let Some(mark) = &app.closing_mark {
+        format!(" Close mark {} ", mark.label())
+    } else if is_editing {
         " Edit Entry ".to_string()
     } else {
         let today = Local::now().date_naive();

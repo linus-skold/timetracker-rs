@@ -874,7 +874,7 @@ pub const PHASES: [&str; 8] = [
 /// The description `commands::log` is given: the summary, then one tag per axis the
 /// `project` field cannot express — the item (omitted for `-`), the phase, and
 /// `#agent`. There is **no bare `#<project>` tag**; `commands::log` runs `parse_tags`.
-fn description(project: &str, issue: &str, phase: &str, summary: &str) -> String {
+pub(crate) fn description(project: &str, issue: &str, phase: &str, summary: &str) -> String {
     let mut description = strip_stray_tags(summary);
     if issue != "-" {
         description.push_str(&format!(" #{project}/{issue}"));

@@ -8,6 +8,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Dispatches one key press against the current input mode.
 pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
+    // A result message lasts until the next key.
+    app.status_message = None;
     match app.input_mode {
         InputMode::Normal => normal(app, key)?,
         InputMode::Onboarding => onboarding(app, key)?,
@@ -20,6 +22,8 @@ pub(crate) fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         // whole answer lives in `answer_confirm`.
         InputMode::Confirm => app.answer_confirm(key.code)?,
         InputMode::ColumnPicker => column_picker(app, key),
+        InputMode::MarkPicker => mark_picker(app, key),
+        InputMode::MarkAction => mark_action(app, key),
     }
     Ok(())
 }
@@ -108,6 +112,7 @@ fn normal(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char('t') => app.go_to_today(),
         KeyCode::Char('o') => app.toggle_sort_order(),
         KeyCode::Char('c') => app.open_column_picker(),
+        KeyCode::Char('x') => app.open_mark_picker(),
         KeyCode::Char('?') => {
             app.help_scroll = 0;
             app.input_mode = InputMode::Help;
@@ -213,6 +218,25 @@ fn column_picker(app: &mut App, key: KeyEvent) {
             app.column_picker_set_rank(d.to_digit(10).unwrap() as u8);
         }
         KeyCode::Char('0') | KeyCode::Char(' ') | KeyCode::Backspace => app.column_picker_clear(),
+        _ => {}
+    }
+}
+
+fn mark_picker(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => app.cancel_mark_popup(),
+        KeyCode::Enter => app.mark_picker_choose(),
+        KeyCode::Char('j') | KeyCode::Down => app.mark_picker_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.mark_picker_move(-1),
+        _ => {}
+    }
+}
+
+fn mark_action(app: &mut App, key: KeyEvent) {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') => app.cancel_mark_popup(),
+        KeyCode::Char('e') => app.edit_picked_mark(),
+        KeyCode::Char('d') => app.discard_picked_mark(),
         _ => {}
     }
 }

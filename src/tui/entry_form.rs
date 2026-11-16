@@ -7,13 +7,13 @@ use chrono::{DateTime, Local, NaiveDate};
 
 /// A submittable form resolved into what the store takes: description, tags,
 /// start, the end an open entry does not have, and the custom JSON.
-struct EntryFields {
-    description: String,
-    tags: Vec<String>,
-    start_time: DateTime<Local>,
-    end_time: Option<DateTime<Local>>,
+pub(super) struct EntryFields {
+    pub(super) description: String,
+    pub(super) tags: Vec<String>,
+    pub(super) start_time: DateTime<Local>,
+    pub(super) end_time: Option<DateTime<Local>>,
     /// `None` for a blank Data field, which clears the entry's data on an edit.
-    data: Option<serde_json::Value>,
+    pub(super) data: Option<serde_json::Value>,
 }
 
 impl App {
@@ -33,6 +33,7 @@ impl App {
         self.input_mode = InputMode::Normal;
         self.clear_form_fields();
         self.editing_entry_id = None;
+        self.closing_mark = None;
     }
 
     fn clear_form_fields(&mut self) {
@@ -106,7 +107,7 @@ impl App {
     /// The fields to save, or `None` when there is nothing to save yet. A
     /// rejected value is left on screen with `form_error` set, so nothing is
     /// written and the form stays open on what the user typed.
-    fn fields_to_save(&mut self) -> Option<EntryFields> {
+    pub(super) fn fields_to_save(&mut self) -> Option<EntryFields> {
         match self.build_entry_fields() {
             Ok(fields) => fields,
             Err(message) => {
@@ -117,6 +118,10 @@ impl App {
     }
 
     pub(crate) fn submit_entry(&mut self) -> Result<()> {
+        // The add form doubles as the close form for an agent mark.
+        if self.closing_mark.is_some() {
+            return self.submit_mark_close();
+        }
         let Some(fields) = self.fields_to_save() else {
             return Ok(());
         };
@@ -456,7 +461,7 @@ impl App {
     }
 
     /// The project as typed, trimmed; an empty field means "no project".
-    fn parse_project(&self) -> Option<String> {
+    pub(super) fn parse_project(&self) -> Option<String> {
         let project = normalize_name(self.input_project.value());
         (!project.is_empty()).then_some(project)
     }

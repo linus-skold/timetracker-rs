@@ -20,6 +20,9 @@ mod cache;
 mod column_picker;
 mod entry_form;
 mod keys;
+mod mark_close;
+#[cfg(test)]
+mod mark_close_tests;
 mod marks_surface;
 mod navigation;
 mod onboarding;
@@ -168,6 +171,15 @@ pub(crate) struct App {
     pub(crate) column_ranks: [Option<u8>; 7],
     /// The column picker's highlighted row.
     pub(crate) column_cursor: usize,
+    /// The mark picker's highlighted row, an index into `marks`.
+    pub(crate) mark_cursor: usize,
+    /// The mark the `MarkAction` prompt stands in front of. Captured on pick:
+    /// the poll can reorder `marks` while the prompt is open.
+    pub(crate) picked_mark: Option<Mark>,
+    /// Set while the entry form closes this mark; saving logs it and drops the mark.
+    pub(crate) closing_mark: Option<Mark>,
+    /// A one-line result, shown in the Status box until the next key.
+    pub(crate) status_message: Option<String>,
 }
 
 impl App {
@@ -277,6 +289,10 @@ impl App {
             entry_columns,
             column_ranks: [None; 7],
             column_cursor: 0,
+            mark_cursor: 0,
+            picked_mark: None,
+            closing_mark: None,
+            status_message: None,
         };
         // The first tick is 250 ms away, so read now for a current first frame.
         app.sync_from_marks();
@@ -442,7 +458,7 @@ mod tests {
     use std::path::PathBuf;
 
     /// The sandbox's mark directory, created on demand.
-    fn mark_sandbox() -> PathBuf {
+    pub(super) fn mark_sandbox() -> PathBuf {
         let dir = crate::marks::mark_dir().expect("a mark dir");
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -450,7 +466,7 @@ mod tests {
 
     /// Write a mark file the way `tt agent begin` does: name is the phase key,
     /// content a unix-seconds start. Never shells out.
-    fn begin_mark(dir: &std::path::Path, key: &str, minutes_ago: i64) {
+    pub(super) fn begin_mark(dir: &std::path::Path, key: &str, minutes_ago: i64) {
         let start = Local::now() - chrono::Duration::minutes(minutes_ago);
         std::fs::write(dir.join(key), format!("{}\n", start.timestamp())).unwrap();
     }
