@@ -309,3 +309,77 @@ fn the_cursor_stays_on_its_entry_when_grouping_flips() {
         Some("n1".to_string())
     );
 }
+
+#[test]
+fn turning_grouping_off_on_a_project_header_lands_on_its_first_member() {
+    let _guard = env_guard();
+    let mut app = app_with("proj-off-header", mixed_entries(), ViewMode::Day);
+    app.group_by_project = true;
+    // Index 5 is the alpha header; its newest member is `a3`.
+    app.table_state.select(Some(5));
+
+    app.toggle_group_by_project();
+
+    assert_eq!(
+        app.selected_entry().map(|e| e.description.clone()),
+        Some("a3".to_string())
+    );
+}
+
+#[test]
+fn turning_grouping_on_from_an_issue_header_in_a_collapsed_project_lands_on_the_project() {
+    let _guard = env_guard();
+    let mut app = app_with("proj-on-header", mixed_entries(), ViewMode::Day);
+    app.collapsed_projects.insert("alpha".to_string());
+    // Flat order: b1, n2, n1, a3, group.
+    app.table_state.select(Some(4));
+
+    app.toggle_group_by_project();
+
+    match app.selected_row() {
+        Some(VisibleRow::ProjectHeader(header)) => assert_eq!(header.project, "alpha"),
+        _ => panic!("the cursor is not on the alpha header"),
+    }
+}
+
+#[test]
+fn the_same_issue_in_two_projects_keeps_the_cursor_on_its_own_header() {
+    let _guard = env_guard();
+    let mut app = app_with(
+        "proj-same-tag",
+        vec![
+            at(0, "b1", Some("beta"), &["tt/8"], today(), 9),
+            at(1, "b2", Some("beta"), &["tt/8"], today(), 10),
+            at(2, "a1", Some("alpha"), &["tt/8"], today(), 12),
+            at(3, "a2", Some("alpha"), &["tt/8"], today(), 13),
+        ],
+        ViewMode::Day,
+    );
+    app.group_by_project = true;
+    // Rows: alpha, its group, beta, its group. The cursor is on beta's group.
+    app.table_state.select(Some(3));
+
+    app.toggle_group_at_cursor();
+
+    // alpha, group, a2, a1, beta, group: beta's group is the sixth.
+    assert_eq!(app.table_state.selected(), Some(5));
+}
+
+#[test]
+fn the_reveal_counts_every_row_under_a_project_including_expanded_issues() {
+    let _guard = env_guard();
+    let mut app = app_with("proj-reveal", mixed_entries(), ViewMode::Day);
+    app.group_by_project = true;
+    app.expanded_issues.insert("tt/8".to_string());
+
+    // alpha holds a3, the issue header and its two members; three entries.
+    let rows = app.rows();
+    assert_eq!(
+        super::project_rows::rows_under_project_header(&rows, 5),
+        Some(4)
+    );
+    assert_eq!(
+        super::project_rows::rows_under_project_header(&rows, 1),
+        None
+    );
+}

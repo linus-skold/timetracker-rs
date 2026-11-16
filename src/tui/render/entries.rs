@@ -6,6 +6,7 @@ use super::project_header::project_header_row;
 use super::view_header::{content_title, render_view_selector};
 use crate::tracker::TimeData;
 use crate::tui::panes::Polarity;
+use crate::tui::project_rows::rows_under_project_header;
 use crate::tui::rows::{GroupHeader, Member, VisibleRow};
 use crate::tui::summary::project_key;
 use crate::tui::types::Focus;
@@ -467,7 +468,11 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
     {
         let member_count = match app.selected_row() {
             Some(VisibleRow::GroupHeader(header)) => Some(header.members.len()),
-            Some(VisibleRow::ProjectHeader(header)) => Some(header.members.len()),
+            // Expanded issue groups add rows beyond the member count.
+            Some(VisibleRow::ProjectHeader(_)) => app
+                .table_state
+                .selected()
+                .and_then(|idx| rows_under_project_header(&model, idx)),
             _ => None,
         };
         if let Some(count) = member_count {

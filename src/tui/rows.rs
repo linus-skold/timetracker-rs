@@ -28,8 +28,17 @@ pub(crate) enum VisibleRow {
 /// anchors by tag, never by a member's id: resolving an id would prefer that
 /// member's own row and slide the cursor off the header it was on.
 pub(crate) enum CursorAnchor {
-    Header { tag: String, date: NaiveDate },
-    Project { project: String, date: NaiveDate },
+    /// `project` is set only while grouping, as the same tag can sit in two
+    /// projects on one day.
+    Header {
+        tag: String,
+        date: NaiveDate,
+        project: Option<String>,
+    },
+    Project {
+        project: String,
+        date: NaiveDate,
+    },
     Entry(u64),
 }
 
@@ -152,6 +161,7 @@ impl App {
             VisibleRow::GroupHeader(header) => Some(CursorAnchor::Header {
                 tag: header.tag,
                 date: header.start.date_naive(),
+                project: header.project.filter(|_| self.group_by_project),
             }),
             VisibleRow::ProjectHeader(header) => Some(CursorAnchor::Project {
                 project: header.project,
@@ -165,8 +175,10 @@ impl App {
     /// segment it was in, then any header for the tag or project.
     pub(crate) fn selectable_index_for(&self, anchor: &CursorAnchor) -> Option<usize> {
         let is_header = |row: &VisibleRow, same_day: bool| match (row, anchor) {
-            (VisibleRow::GroupHeader(header), CursorAnchor::Header { tag, date }) => {
-                header.tag == *tag && (!same_day || header.start.date_naive() == *date)
+            (VisibleRow::GroupHeader(header), CursorAnchor::Header { tag, date, project }) => {
+                header.tag == *tag
+                    && (!same_day || header.start.date_naive() == *date)
+                    && (project.is_none() || header.project == *project)
             }
             (VisibleRow::ProjectHeader(header), CursorAnchor::Project { project, date }) => {
                 header.project == *project && (!same_day || header.start.date_naive() == *date)

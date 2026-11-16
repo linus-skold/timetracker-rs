@@ -9,14 +9,29 @@ impl App {
     /// Flip project grouping, keeping the cursor on what it was on.
     pub(crate) fn toggle_group_by_project(&mut self) {
         let anchor = self.cursor_anchor();
+        let header_member = self.first_member_id_under_cursor();
         self.group_by_project = !self.group_by_project;
-        let moved_to = anchor.and_then(|a| self.selectable_index_for(&a));
+        // A header that has no twin after the flip falls back to its first
+        // member, which resolves to its own row or the header holding it.
+        let moved_to = anchor
+            .and_then(|a| self.selectable_index_for(&a))
+            .or_else(|| header_member.and_then(|id| self.selectable_index_of(id)));
         let selected = moved_to.or_else(|| {
-            // A project header has no row once grouping is off.
             let last = self.selectable_len().checked_sub(1)?;
             Some(self.table_state.selected()?.min(last))
         });
         self.table_state.select(selected);
+    }
+
+    /// The first member's id when the cursor is on a group or project header.
+    fn first_member_id_under_cursor(&self) -> Option<u64> {
+        let members = match self.selected_row()? {
+            VisibleRow::GroupHeader(header) => header.members,
+            VisibleRow::ProjectHeader(header) => header.members,
+            _ => return None,
+        };
+        let first = *members.first()?;
+        self.data.entries.get(first).map(|entry| entry.id)
     }
 
     /// Open or close `project`'s header on every day it appears in.
@@ -78,6 +93,32 @@ impl App {
         }
         projects
     }
+}
+
+/// The rows that sit under the `selectable`th selectable row when that is a
+/// project header: its entries and any issue headers and members, up to the
+/// next project or day header.
+pub(super) fn rows_under_project_header(rows: &[VisibleRow], selectable: usize) -> Option<usize> {
+    let position = rows
+        .iter()
+        .enumerate()
+        .filter(|(_, row)| !matches!(row, VisibleRow::DayHeader { .. }))
+        .nth(selectable)?
+        .0;
+    if !matches!(rows[position], VisibleRow::ProjectHeader(_)) {
+        return None;
+    }
+    Some(
+        rows[position + 1..]
+            .iter()
+            .take_while(|row| {
+                !matches!(
+                    row,
+                    VisibleRow::ProjectHeader(_) | VisibleRow::DayHeader { .. }
+                )
+            })
+            .count(),
+    )
 }
 
 /// Mark `children`, a project's issue-grouped rows, as hanging off its header.
