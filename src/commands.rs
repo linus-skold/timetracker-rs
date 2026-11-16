@@ -450,19 +450,35 @@ pub fn report(request: ReportRequest) -> Result<()> {
     let mut data = load_data()?;
     crate::tracker::migrate(&mut data);
     let today = Local::now().date_naive();
-    let scope = report::resolve_scope(today, all, week, since, until, project.as_deref());
-    let selected = report::select(&data, &scope, project.as_deref());
-    let rolled = report::rollup(&selected);
-
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&report::to_json(&rolled, &scope.label))?
-        );
-    } else {
-        print!("{}", report::render(&rolled, &scope.label));
-    }
+    print!(
+        "{}",
+        report_output(&data, today, (all, week, since, until), project, json)?
+    );
     Ok(())
+}
+
+/// The report text. The project is normalized here because stored names are
+/// lowercase and the label must show the name that was matched.
+fn report_output(
+    data: &crate::tracker::TimeData,
+    today: NaiveDate,
+    (all, week, since, until): (bool, bool, Option<NaiveDate>, Option<NaiveDate>),
+    project: Option<String>,
+    json: bool,
+) -> Result<String> {
+    let project = normalize_project(project);
+    let scope = report::resolve_scope(today, all, week, since, until, project.as_deref());
+    let scope = &scope;
+    let selected = report::select(data, scope, project.as_deref());
+    let rolled = report::rollup(&selected);
+    Ok(if json {
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&report::to_json(&rolled, &scope.label))?
+        )
+    } else {
+        report::render(&rolled, &scope.label)
+    })
 }
 
 #[cfg(test)]
@@ -735,6 +751,33 @@ mod tests {
             "stored at the asked-for clock time"
         );
         assert_eq!(entry.project.as_deref(), Some("timetracker"));
+    }
+
+    #[test]
+    fn report_matches_the_project_in_any_case_and_labels_it_lowercase() {
+        let mut data = crate::tracker::TimeData::default();
+        let now = Local::now();
+        data.add_entry(
+            "a".into(),
+            Some("Timetracker".into()),
+            vec![],
+            now,
+            Some(now),
+        );
+        let today = now.date_naive();
+        let flags = (true, false, None, None);
+
+        let text = report_output(&data, today, flags, Some("TimeTracker".into()), true).unwrap();
+        assert!(text.contains("timetracker"), "{text}");
+        assert!(!text.contains("TimeTracker"), "{text}");
+        let other = report_output(&data, today, flags, Some("nope".into()), true).unwrap();
+        assert_ne!(text, other);
+    }
+
+    #[test]
+    fn start_prints_and_stores_duplicate_tags_once() {
+        let (_, tags) = parse_tags("work #Bug #bug");
+        assert_eq!(tags, ["bug"]);
     }
 
     #[test]

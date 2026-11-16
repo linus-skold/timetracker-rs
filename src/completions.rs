@@ -152,7 +152,7 @@ fn typed_project<I: Iterator<Item = String>>(args: I) -> Option<String> {
         .ok()?;
     let (_, sub) = matches.subcommand()?.1.subcommand()?;
     let project = sub.get_one::<String>("project")?;
-    (!project.is_empty()).then(|| project.clone())
+    (!project.is_empty()).then(|| crate::naming::normalize_name(project))
 }
 
 #[cfg(test)]
@@ -315,6 +315,12 @@ mod tests {
     #[test]
     fn typed_project_reads_the_agent_positional() {
         let a = argv(&["/bin/tt", "--", "tt", "agent", "begin", "proj", ""]);
+        assert_eq!(typed_project(a), Some("proj".to_string()));
+    }
+
+    #[test]
+    fn typed_project_is_lowercased_to_match_stored_names() {
+        let a = argv(&["/bin/tt", "--", "tt", "agent", "begin", "Proj", ""]);
         assert_eq!(typed_project(a), Some("proj".to_string()));
     }
 

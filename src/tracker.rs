@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::duration;
 use crate::icons;
-use crate::naming::{normalize_name, normalize_project, normalize_tags};
+use crate::naming::{normalize_project, normalize_tags};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct TimeEntry {
@@ -65,13 +65,13 @@ pub fn parse_tags(text: &str) -> (String, Vec<String>) {
     for word in text.split_whitespace() {
         if word.starts_with('#') && word.len() > 1 {
             // Remove the # prefix and add to tags
-            tags.push(normalize_name(&word[1..]));
+            tags.push(word[1..].to_string());
         } else {
             clean_parts.push(word);
         }
     }
 
-    (clean_parts.join(" "), tags)
+    (clean_parts.join(" "), normalize_tags(tags))
 }
 
 /// Infer the project from an entry's tags: the tag `X` for which some other tag
