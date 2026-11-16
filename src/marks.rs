@@ -542,6 +542,11 @@ pub fn is_closing_in(dir: &Path, mark: MarkRef) -> bool {
     closing_path(dir, &mark_key(mark)).exists()
 }
 
+/// Drop only the `closing/` sentinel, for a close that failed before it logged.
+pub fn abandon_close_in(dir: &Path, mark: MarkRef) -> io::Result<()> {
+    remove_if_present(&closing_path(dir, &mark_key(mark)))
+}
+
 /// Remove one path, treating an absent one as done.
 fn remove_if_present(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
@@ -577,6 +582,24 @@ pub struct Phase {
     /// Every **bare** heartbeat, **in file order**; a hook-beaten phase reads back
     /// as a beat-less one. Never sort or dedup: [`gaps_over`] judges that.
     pub beats: Vec<i64>,
+}
+
+impl Phase {
+    /// Where `tt agent end` measures to: the last bare heartbeat, or `now` for a
+    /// beat-less phase. Clamped, so a heartbeat behind the mark is a zero-length phase.
+    pub fn measured_end(&self, now: i64) -> i64 {
+        self.beats.last().copied().unwrap_or(now).max(self.started)
+    }
+
+    /// The silences `tt agent end` flags up to `ended`. An unvouched phase is one
+    /// whole-span silence against the longer grace.
+    pub fn flagged_gaps(&self, ended: i64, thresholds: Thresholds) -> Vec<(i64, i64)> {
+        if self.beats.is_empty() {
+            gaps_over(self.started, ended, &[], thresholds.unvouched)
+        } else {
+            gaps_over(self.started, ended, &self.beats, thresholds.gap)
+        }
+    }
 }
 
 /// A line's leading whitespace-delimited field as a bare timestamp, or `None`.

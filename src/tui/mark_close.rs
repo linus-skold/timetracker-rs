@@ -12,6 +12,36 @@ use chrono::{Duration, Local};
 /// How the form shows a time, as `start_editing` does.
 const FORM_TIME_FORMAT: &str = "%Y-%m-%d %H:%M";
 
+/// Whether the mark on disk is still the one the user picked, by key and start.
+fn mark_is_still_open(dir: &std::path::Path, mark: &marks::Mark) -> bool {
+    matches!(
+        marks::read_phase_in(dir, mark.as_key()),
+        Ok(Some(phase)) if phase.started == mark.start.timestamp()
+    )
+}
+
+fn closed_already(mark: &marks::Mark) -> String {
+    format!("{} is closed already. Nothing logged.", mark.label())
+}
+
+/// The form warning for silences `tt agent end` would refuse over, or `None`.
+fn idle_gap_notice(gaps: &[(i64, i64)]) -> Option<String> {
+    if gaps.is_empty() {
+        return None;
+    }
+    let clock = |epoch: i64| {
+        crate::time::instant(epoch).map_or_else(
+            || "??:??".to_string(),
+            |instant| instant.format("%H:%M").to_string(),
+        )
+    };
+    let spans: Vec<String> = gaps
+        .iter()
+        .map(|&(from, to)| format!("{}-{}", clock(from), clock(to)))
+        .collect();
+    Some(format!("idle gaps: {}, check the times", spans.join(", ")))
+}
+
 impl App {
     /// `x`: list every open mark. With none, say so and open nothing.
     pub(crate) fn open_mark_picker(&mut self) {
@@ -64,6 +94,12 @@ impl App {
             self.status_message = Some("No mark directory.".to_string());
             return;
         };
+        // An agent may have ended it, or begun a new phase under the same key.
+        if !mark_is_still_open(&dir, &mark) {
+            self.status_message = Some(closed_already(&mark));
+            self.refresh_marks();
+            return;
+        }
         self.status_message = Some(match marks::cancel_in(&dir, mark.as_key()) {
             Ok(()) => format!("Dropped mark {}.", mark.label()),
             Err(err) => format!("Could not drop mark {}: {err}", mark.label()),
@@ -86,6 +122,18 @@ impl App {
             "",
         ));
         let now = Local::now();
+        // Measured as `tt agent end` does: to the last bare beat, else to now.
+        let phase = marks::mark_dir()
+            .and_then(|dir| marks::read_phase_in(&dir, key).ok().flatten())
+            .filter(|phase| phase.started == mark.start.timestamp());
+        let ended = phase
+            .as_ref()
+            .map_or(now.timestamp(), |phase| phase.measured_end(now.timestamp()));
+        let end = crate::time::instant(ended).unwrap_or(now);
+        if let Some(phase) = &phase {
+            self.form_notice =
+                idle_gap_notice(&phase.flagged_gaps(ended, crate::audit::thresholds()));
+        }
         let label_data = mark
             .agent
             .as_deref()
@@ -97,9 +145,9 @@ impl App {
         self.input_start_time
             .set_from(&mark.start.format(FORM_TIME_FORMAT).to_string());
         self.input_end_time
-            .set_from(&now.format(FORM_TIME_FORMAT).to_string());
+            .set_from(&end.format(FORM_TIME_FORMAT).to_string());
         self.input_duration.set_from(&crate::duration::format(
-            (now - mark.start).max(Duration::zero()),
+            (end - mark.start).max(Duration::zero()),
         ));
         self.input_data
             .set_from(&crate::entry_data::to_edit_string(label_data.as_ref()));
@@ -138,25 +186,28 @@ impl App {
                 mark.label()
             ));
         }
-        let still_open = matches!(
-            marks::read_phase_in(&dir, key),
-            Ok(Some(phase)) if phase.started == mark.start.timestamp()
-        );
-        if !still_open {
-            return self.finish_mark_close(format!(
-                "{} is closed already. Nothing logged.",
-                mark.label()
-            ));
+        if !mark_is_still_open(&dir, &mark) {
+            return self.finish_mark_close(closed_already(&mark));
         }
 
-        // Written before the entry, as `tt agent end` does.
-        marks::start_closing_in(&dir, key)?;
-        self.mutate_store(|store| {
+        // Written before the entry, as `tt agent end` does. A failure keeps the
+        // form open: an error here must not leave `handle_key` and stop the TUI.
+        if let Err(err) = marks::start_closing_in(&dir, key) {
+            self.form_error = Some(format!("Could not start the close: {err}"));
+            return Ok(());
+        }
+        let written = self.mutate_store(|store| {
             let id = store
                 .add_entry(description, project, tags, start_time, Some(end_time))
                 .id;
             store.set_entry_data(id, data);
-        })?;
+        });
+        if let Err(err) = written {
+            // Nothing was logged, so the sentinel must not block a retry.
+            let _ = marks::abandon_close_in(&dir, key);
+            self.form_error = Some(format!("Could not save the entry: {err}"));
+            return Ok(());
+        }
         let message = match marks::cancel_in(&dir, key) {
             Ok(()) => format!("Closed mark {}.", mark.label()),
             Err(err) => format!(

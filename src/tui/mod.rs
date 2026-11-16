@@ -178,6 +178,8 @@ pub(crate) struct App {
     pub(crate) picked_mark: Option<Mark>,
     /// Set while the entry form closes this mark; saving logs it and drops the mark.
     pub(crate) closing_mark: Option<Mark>,
+    /// A warning the close form shows in its help row; blocks nothing.
+    pub(crate) form_notice: Option<String>,
     /// A one-line result, shown in the Status box until the next key.
     pub(crate) status_message: Option<String>,
 }
@@ -292,6 +294,7 @@ impl App {
             mark_cursor: 0,
             picked_mark: None,
             closing_mark: None,
+            form_notice: None,
             status_message: None,
         };
         // The first tick is 250 ms away, so read now for a current first frame.

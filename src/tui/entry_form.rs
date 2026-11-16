@@ -45,6 +45,7 @@ impl App {
         self.input_duration.clear();
         self.input_data.clear();
         self.form_error = None;
+        self.form_notice = None;
     }
 
     pub(crate) fn start_editing(&mut self) {

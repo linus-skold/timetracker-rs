@@ -13,7 +13,7 @@ use crate::audit;
 use crate::cli::{ActivityCommands, AgentCommands};
 use crate::commands;
 use crate::icons;
-use crate::marks::{self, Begin, MarkRef, Thresholds, Touch};
+use crate::marks::{self, Begin, MarkRef, Touch};
 use crate::storage;
 use crate::tracker;
 
@@ -626,22 +626,12 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
             };
 
             // Clamped, so a heartbeat behind the mark is a zero-length phase.
-            let ended = marked
-                .beats
-                .last()
-                .copied()
-                .unwrap_or_else(|| Local::now().timestamp())
-                .max(marked.started);
+            let ended = marked.measured_end(Local::now().timestamp());
             let measured = (ended - marked.started) / 60;
             // The gaps are epochs on this timeline, so the entry ends where it does.
             anchor = Some(instant(ended)?);
 
-            // An unvouched phase is one whole-span silence against the longer grace.
-            let Thresholds { gap, unvouched } = audit::thresholds();
-            let gaps = match marked.beats.is_empty() {
-                true => marks::gaps_over(marked.started, ended, &[], unvouched),
-                false => marks::gaps_over(marked.started, ended, &marked.beats, gap),
-            };
+            let gaps = marked.flagged_gaps(ended, audit::thresholds());
             if gaps.is_empty() {
                 measured
             } else {

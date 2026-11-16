@@ -47,6 +47,99 @@ fn logged_entries() -> Vec<crate::tracker::TimeEntry> {
     crate::storage::load_data().unwrap().entries
 }
 
+/// Replace the mark with one begun `minutes_ago`: same key, another start.
+fn reopen_mark(dir: &std::path::Path, minutes_ago: i64) {
+    std::fs::remove_file(dir.join(MARK_KEY)).unwrap();
+    begin_mark(dir, MARK_KEY, minutes_ago);
+}
+
+#[test]
+fn the_picker_reaches_every_open_mark() {
+    let _guard = env_guard();
+    let (mut app, dir) = app_with_mark("mark-close-many");
+    for key in ["proj.13.qa", "proj.14.docs", "proj.15.plan"] {
+        begin_mark(&dir, key, 5);
+    }
+    app.marks_stamp = None;
+    app.sync_from_marks();
+    assert_eq!(app.marks.len(), 4);
+
+    press(&mut app, KeyCode::Char('x'));
+    for _ in 0..3 {
+        press(&mut app, KeyCode::Char('j'));
+    }
+    press(&mut app, KeyCode::Enter);
+
+    assert_eq!(app.picked_mark.as_ref(), Some(&app.marks[3]));
+}
+
+#[test]
+fn discard_leaves_a_reopened_mark_alone() {
+    let _guard = env_guard();
+    let (mut app, dir) = app_with_mark("mark-close-discard-reopened");
+
+    press(&mut app, KeyCode::Char('x'));
+    press(&mut app, KeyCode::Enter);
+    reopen_mark(&dir, 5);
+    press(&mut app, KeyCode::Char('d'));
+
+    assert!(dir.join(MARK_KEY).exists());
+    assert!(
+        app.status_message
+            .as_deref()
+            .is_some_and(|message| message.contains("closed already"))
+    );
+}
+
+#[test]
+fn save_logs_nothing_for_a_reopened_mark() {
+    let _guard = env_guard();
+    let (mut app, dir) = app_with_mark("mark-close-save-reopened");
+
+    open_close_form(&mut app);
+    type_str(&mut app, "wrote it");
+    reopen_mark(&dir, 5);
+    press(&mut app, KeyCode::Enter);
+
+    assert!(logged_entries().is_empty());
+    assert!(dir.join(MARK_KEY).exists());
+}
+
+#[test]
+fn an_unfinished_close_blocks_the_save() {
+    let _guard = env_guard();
+    let (mut app, dir) = app_with_mark("mark-close-sentinel");
+
+    open_close_form(&mut app);
+    type_str(&mut app, "wrote it");
+    let mark = app.closing_mark.clone().unwrap();
+    crate::marks::start_closing_in(&dir, mark.as_key()).unwrap();
+    press(&mut app, KeyCode::Enter);
+
+    assert!(logged_entries().is_empty());
+    assert!(dir.join(MARK_KEY).exists());
+}
+
+#[test]
+fn the_prefilled_end_is_the_last_beat() {
+    let _guard = env_guard();
+    let (mut app, dir) = app_with_mark("mark-close-beat");
+    let beat = chrono::Local::now() - chrono::Duration::minutes(10);
+    std::fs::create_dir_all(dir.join("beats")).unwrap();
+    std::fs::write(
+        dir.join("beats").join(MARK_KEY),
+        format!("{}\n", beat.timestamp()),
+    )
+    .unwrap();
+
+    open_close_form(&mut app);
+
+    assert_eq!(
+        app.input_end_time.value(),
+        beat.format("%Y-%m-%d %H:%M").to_string()
+    );
+}
+
 #[test]
 fn x_without_marks_opens_nothing_and_says_so() {
     let _guard = env_guard();
