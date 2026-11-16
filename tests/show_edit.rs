@@ -264,3 +264,41 @@ fn idle_outside_the_entry_or_backwards_is_refused() {
     }
     assert_eq!(shown(&case, "1"), before);
 }
+
+/// `tt log --idle` stores idle outside the span, so only span/idle edits are checked.
+fn seeded_with_out_of_span_idle(name: &str) -> Case {
+    let case = Case::new(name);
+    let now = common::now();
+    case.write_raw_store(&format!(
+        r#"{{"entries":[{{"id":1,"description":"loose idle","project":null,"tags":[],"start_time":"{}","end_time":"{}","idle":[{{"start":"{}","end":"{}"}}]}}],"next_id":2,"schema_version":1}}"#,
+        common::stamp(now - 120),
+        common::stamp(now - 90),
+        common::stamp(now - 300),
+        common::stamp(now - 250),
+    ));
+    case
+}
+
+#[test]
+fn a_description_edit_ignores_idle_outside_the_span() {
+    let case = seeded_with_out_of_span_idle("edit-loose-idle-description");
+
+    edit(&case, Some("1"), &json!({"description": "renamed"})).assert_status(0);
+
+    assert_eq!(shown(&case, "1")["description"], "renamed");
+}
+
+#[test]
+fn an_end_time_edit_rejects_idle_that_stays_outside_the_span() {
+    let case = seeded_with_out_of_span_idle("edit-loose-idle-end");
+    let before = shown(&case, "1");
+
+    let run = edit(
+        &case,
+        Some("1"),
+        &json!({"end_time": common::stamp(common::now() - 80)}),
+    );
+
+    assert_edit_fails(&run, "idle interval");
+    assert_eq!(shown(&case, "1"), before);
+}

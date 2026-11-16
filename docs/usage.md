@@ -86,7 +86,7 @@ Change some fields of one entry. Only the keys you give change. Editable keys:
 Name the entry with `<ref>`, or with an `id` or `uuid` key in the JSON. `id` and
 `uuid` only select; they never change. A selector that points at a different entry,
 an unknown key, an `end_time` before `start_time` or a second active entry is an
-error, and nothing is written. An `idle` interval must end after it starts and lie inside the entry. `id` may be a number or a numeric string, and `uuid` a uuid string. On success it prints the updated entry as `tt show` does.
+error, and nothing is written. When a patch changes `start_time`, `end_time` or `idle`, each `idle` interval must end after it starts and lie inside the entry. `id` may be a number or a numeric string, and `uuid` a uuid string. On success it prints the updated entry as `tt show` does.
 
 ```sh
 tt edit 12 --json '{"description": "Review PR", "project": null}'

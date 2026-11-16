@@ -52,7 +52,10 @@ pub fn edit_entry(
     for (key, value) in patch {
         apply_key(&mut edited, key, value)?;
     }
-    check_edited(data, index, &edited)?;
+    let touches_span_or_idle = ["start_time", "end_time", "idle"]
+        .iter()
+        .any(|key| patch.contains_key(*key));
+    check_edited(data, index, &edited, touches_span_or_idle)?;
 
     let id = edited.id;
     data.entries[index] = edited;
@@ -135,18 +138,32 @@ fn parse_data(value: &Value) -> Result<Option<Value>> {
         .map_err(|e| anyhow!("bad value for \"data\": {e}"))
 }
 
-fn check_edited(data: &TimeData, index: usize, edited: &TimeEntry) -> Result<()> {
-    if let Some(end) = edited.end_time
-        && end < edited.start_time
-    {
-        bail!("end_time is before start_time");
-    }
+/// `tt log --idle` can store idle outside the span, so an edit that leaves
+/// the span and idle alone must not fail on it.
+fn check_idle_bounds(edited: &TimeEntry) -> Result<()> {
     for gap in &edited.idle {
         let inside =
             gap.start >= edited.start_time && edited.end_time.is_none_or(|end| gap.end <= end);
         if gap.end < gap.start || !inside {
             bail!("idle interval must have end after start and lie inside the entry");
         }
+    }
+    Ok(())
+}
+
+fn check_edited(
+    data: &TimeData,
+    index: usize,
+    edited: &TimeEntry,
+    touches_span_or_idle: bool,
+) -> Result<()> {
+    if let Some(end) = edited.end_time
+        && end < edited.start_time
+    {
+        bail!("end_time is before start_time");
+    }
+    if touches_span_or_idle {
+        check_idle_bounds(edited)?;
     }
     let other_active = data
         .entries
