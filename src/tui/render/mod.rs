@@ -114,19 +114,21 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             Style::default().fg(theme::inactive()).italic(),
         ),
     };
-    let mut status_spans = vec![Span::styled(status_text, status_style)];
+    // The message goes first, so a long description cannot push it off screen.
+    let mut status_spans = Vec::new();
+    if let Some(message) = &app.status_message {
+        status_spans.push(Span::styled(
+            format!("{message} | "),
+            Style::default().fg(theme::highlight()),
+        ));
+    }
+    status_spans.push(Span::styled(status_text, status_style));
     if let Some(version) = &app.update_notice {
         status_spans.push(Span::styled(
             format!(
                 " | tt {version} available — run `{}`",
                 crate::update::update_hint()
             ),
-            Style::default().fg(theme::highlight()),
-        ));
-    }
-    if let Some(message) = &app.status_message {
-        status_spans.push(Span::styled(
-            format!(" | {message}"),
             Style::default().fg(theme::highlight()),
         ));
     }
