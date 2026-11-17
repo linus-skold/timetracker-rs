@@ -561,8 +561,9 @@ pub fn begin_close_in(
         return Ok(CloseStart::Unfinished);
     }
     if let Some(expected) = expected_start {
-        match read_phase_in(dir, mark) {
-            Ok(Some(phase)) if phase.started == expected => {}
+        // A read error is not "gone": report it and write nothing.
+        match read_phase_in(dir, mark)? {
+            Some(phase) if phase.started == expected => {}
             _ => return Ok(CloseStart::Gone),
         }
     }

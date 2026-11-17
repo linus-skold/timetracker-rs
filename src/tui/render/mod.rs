@@ -122,16 +122,16 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             Style::default().fg(theme::highlight()),
         ));
     }
-    status_spans.push(Span::styled(status_text, status_style));
     if let Some(version) = &app.update_notice {
         status_spans.push(Span::styled(
             format!(
-                " | tt {version} available — run `{}`",
+                "tt {version} available — run `{}` | ",
                 crate::update::update_hint()
             ),
             Style::default().fg(theme::highlight()),
         ));
     }
+    status_spans.push(Span::styled(status_text, status_style));
     let header = Paragraph::new(Line::from(status_spans)).block(
         Block::default()
             .borders(Borders::ALL)

@@ -712,11 +712,12 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
         marks::CloseStart::Started => {}
         marks::CloseStart::Unfinished => refuse_unfinished_close(mark),
         marks::CloseStart::Gone => {
+            // Not 64: that code tells an agent to log the phase with `item`.
             eprintln!(
-                "tt: {} is closed already — nothing logged",
+                "tt: {} is closed already — another close took it. Nothing was logged here. Do not log it again.",
                 phase_name(mark)
             );
-            std::process::exit(64);
+            std::process::exit(66);
         }
     }
     record_remainder(mark, session, &remainder);

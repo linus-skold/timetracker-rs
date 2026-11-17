@@ -209,10 +209,17 @@ impl App {
             }
             Err(err) => {
                 // Only a sentinel this call wrote may go.
-                if sentinel_is_ours {
-                    let _ = marks::abandon_close_in(&dir, key);
-                }
-                self.form_error = Some(format!("Could not save the entry: {err}"));
+                let cleanup = if sentinel_is_ours {
+                    marks::abandon_close_in(&dir, key).err()
+                } else {
+                    None
+                };
+                self.form_error = Some(match cleanup {
+                    Some(cleanup) => format!(
+                        "Could not save the entry: {err}. The closing file could not be removed: {cleanup}"
+                    ),
+                    None => format!("Could not save the entry: {err}"),
+                });
                 return Ok(());
             }
         };
