@@ -180,33 +180,45 @@ impl App {
             return self.finish_mark_close("No mark directory.".to_string());
         };
         let key = mark.as_key();
-        if marks::is_closing_in(&dir, key) {
-            return self.finish_mark_close(format!(
-                "{} has an unfinished close. Check the report, then discard it.",
-                mark.label()
-            ));
-        }
-        if !mark_is_still_open(&dir, &mark) {
-            return self.finish_mark_close(closed_already(&mark));
-        }
 
-        // Written before the entry, as `tt agent end` does. A failure keeps the
-        // form open: an error here must not leave `handle_key` and stop the TUI.
-        if let Err(err) = marks::start_closing_in(&dir, key) {
-            self.form_error = Some(format!("Could not start the close: {err}"));
-            return Ok(());
-        }
+        // The gate and the entry share one store lock, as in `tt agent end`. A
+        // failure keeps the form open: it must not leave `handle_key`.
+        let mut sentinel_is_ours = false;
         let written = self.mutate_store(|store| {
-            let id = store
-                .add_entry(description, project, tags, start_time, Some(end_time))
-                .id;
-            store.set_entry_data(id, data);
+            let started = marks::begin_close_in(&dir, key, Some(mark.start.timestamp()))?;
+            if started == marks::CloseStart::Started {
+                sentinel_is_ours = true;
+                let id = store
+                    .add_entry(description, project, tags, start_time, Some(end_time))
+                    .id;
+                store.set_entry_data(id, data);
+            }
+            Ok::<_, std::io::Error>(started)
         });
-        if let Err(err) = written {
-            // Nothing was logged, so the sentinel must not block a retry.
-            let _ = marks::abandon_close_in(&dir, key);
-            self.form_error = Some(format!("Could not save the entry: {err}"));
-            return Ok(());
+        let started = match written {
+            Ok(Ok(started)) => started,
+            Ok(Err(err)) => {
+                self.form_error = Some(format!("Could not start the close: {err}"));
+                return Ok(());
+            }
+            Err(err) => {
+                // Only a sentinel this call wrote may go.
+                if sentinel_is_ours {
+                    let _ = marks::abandon_close_in(&dir, key);
+                }
+                self.form_error = Some(format!("Could not save the entry: {err}"));
+                return Ok(());
+            }
+        };
+        match started {
+            marks::CloseStart::Started => {}
+            marks::CloseStart::Unfinished => {
+                return self.finish_mark_close(format!(
+                    "{} has an unfinished close. Check the report, then discard it.",
+                    mark.label()
+                ));
+            }
+            marks::CloseStart::Gone => return self.finish_mark_close(closed_already(&mark)),
         }
         let message = match marks::cancel_in(&dir, key) {
             Ok(()) => format!("Closed mark {}.", mark.label()),

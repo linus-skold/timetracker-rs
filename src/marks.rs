@@ -537,6 +537,47 @@ pub fn start_closing_in(dir: &Path, mark: MarkRef) -> io::Result<()> {
     fs::write(path, format!("{}\n", start.timestamp()))
 }
 
+/// What [`begin_close_in`] found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseStart {
+    /// The sentinel is written and the caller owns the close.
+    Started,
+    /// An earlier close left its sentinel. Nothing was written.
+    Unfinished,
+    /// The mark is gone or replaced. Nothing was written.
+    Gone,
+}
+
+/// The one gate for every closer. Call it **inside the store lock**, before the
+/// entry is added, so a second closer sees the sentinel or the missing mark and
+/// logs nothing. `expected_start` is the start of the mark the caller read, or
+/// `None` on the explicit-minutes path, which needs no mark.
+pub fn begin_close_in(
+    dir: &Path,
+    mark: MarkRef,
+    expected_start: Option<i64>,
+) -> io::Result<CloseStart> {
+    if is_closing_in(dir, mark) {
+        return Ok(CloseStart::Unfinished);
+    }
+    if let Some(expected) = expected_start {
+        match read_phase_in(dir, mark) {
+            Ok(Some(phase)) if phase.started == expected => {}
+            _ => return Ok(CloseStart::Gone),
+        }
+    }
+    if let Err(err) = start_closing_in(dir, mark) {
+        // The write may have left a partial file this call owns.
+        return Err(match abandon_close_in(dir, mark) {
+            Ok(()) => err,
+            Err(cleanup) => io::Error::other(format!(
+                "{err}; the closing file could not be removed either: {cleanup}"
+            )),
+        });
+    }
+    Ok(CloseStart::Started)
+}
+
 /// Whether a close for one phase was started and never finished.
 pub fn is_closing_in(dir: &Path, mark: MarkRef) -> bool {
     closing_path(dir, &mark_key(mark)).exists()
@@ -1534,6 +1575,57 @@ mod tests {
             read(&dir, "closing/tt.8.impl").trim(),
             start.timestamp().to_string()
         );
+    }
+
+    #[test]
+    fn only_one_closer_gets_to_start_a_close() {
+        let dir = sandbox("closing-gate-one-winner");
+        let Begin::Created(start) = begin_in(&dir, key("tt", "8", "impl")).unwrap() else {
+            panic!("a fresh mark is created");
+        };
+        let expected = Some(start.timestamp());
+
+        let first = begin_close_in(&dir, key("tt", "8", "impl"), expected).unwrap();
+        let second = begin_close_in(&dir, key("tt", "8", "impl"), expected).unwrap();
+
+        assert_eq!(first, CloseStart::Started);
+        assert_eq!(second, CloseStart::Unfinished);
+    }
+
+    #[test]
+    fn a_closer_after_the_first_finished_finds_the_mark_gone() {
+        let dir = sandbox("closing-gate-gone");
+        let Begin::Created(start) = begin_in(&dir, key("tt", "8", "impl")).unwrap() else {
+            panic!("a fresh mark is created");
+        };
+        let expected = Some(start.timestamp());
+        begin_close_in(&dir, key("tt", "8", "impl"), expected).unwrap();
+        cancel_in(&dir, key("tt", "8", "impl")).unwrap();
+
+        let late = begin_close_in(&dir, key("tt", "8", "impl"), expected).unwrap();
+
+        assert_eq!(late, CloseStart::Gone);
+        assert!(!is_closing_in(&dir, key("tt", "8", "impl")));
+    }
+
+    #[test]
+    fn a_replaced_mark_is_gone_for_the_old_closer() {
+        let dir = sandbox("closing-gate-replaced");
+        begin_in(&dir, key("tt", "8", "impl")).unwrap();
+
+        let started = begin_close_in(&dir, key("tt", "8", "impl"), Some(1)).unwrap();
+
+        assert_eq!(started, CloseStart::Gone);
+        assert!(!is_closing_in(&dir, key("tt", "8", "impl")));
+    }
+
+    #[test]
+    fn a_close_with_no_mark_to_check_still_starts() {
+        let dir = sandbox("closing-gate-no-mark");
+
+        let started = begin_close_in(&dir, key("tt", "8", "impl"), None).unwrap();
+
+        assert_eq!(started, CloseStart::Started);
     }
 
     #[test]
