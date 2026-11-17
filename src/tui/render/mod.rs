@@ -8,6 +8,7 @@ mod entry_scroll;
 mod form;
 mod heat;
 mod legend;
+mod mark_close;
 mod onboarding;
 mod overlay;
 mod popups;
@@ -19,6 +20,7 @@ use column_picker::render_column_picker_popup;
 use entries::{render_entries_table, render_weekly_breakdown};
 use form::{render_entry_form, render_search_bar};
 use heat::render_heat_grid;
+use mark_close::{render_mark_action_popup, render_mark_picker_popup};
 use onboarding::render_onboarding_popup;
 use popups::{render_confirm_popup, render_detail_popup, render_help_popup};
 use surfaces::{render_marks_surface, render_pane_surface, render_summary_surface};
@@ -112,16 +114,24 @@ pub fn ui(f: &mut Frame, app: &mut App) {
             Style::default().fg(theme::inactive()).italic(),
         ),
     };
-    let mut status_spans = vec![Span::styled(status_text, status_style)];
+    // The message goes first, so a long description cannot push it off screen.
+    let mut status_spans = Vec::new();
+    if let Some(message) = &app.status_message {
+        status_spans.push(Span::styled(
+            format!("{message} | "),
+            Style::default().fg(theme::highlight()),
+        ));
+    }
     if let Some(version) = &app.update_notice {
         status_spans.push(Span::styled(
             format!(
-                " | tt {version} available — run `{}`",
+                "tt {version} available — run `{}` | ",
                 crate::update::update_hint()
             ),
             Style::default().fg(theme::highlight()),
         ));
     }
+    status_spans.push(Span::styled(status_text, status_style));
     let header = Paragraph::new(Line::from(status_spans)).block(
         Block::default()
             .borders(Borders::ALL)
@@ -237,6 +247,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         InputMode::Confirm => render_confirm_popup(f, app),
         InputMode::Onboarding => render_onboarding_popup(f, app),
         InputMode::ColumnPicker => render_column_picker_popup(f, app),
+        InputMode::MarkPicker => render_mark_picker_popup(f, app),
+        InputMode::MarkAction => render_mark_action_popup(f, app),
         _ => {}
     }
 }

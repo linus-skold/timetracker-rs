@@ -13,7 +13,7 @@ use crate::audit;
 use crate::cli::{ActivityCommands, AgentCommands};
 use crate::commands;
 use crate::icons;
-use crate::marks::{self, Begin, MarkRef, Thresholds, Touch};
+use crate::marks::{self, Begin, MarkRef, Touch};
 use crate::storage;
 use crate::tracker;
 
@@ -537,17 +537,38 @@ fn log_entry(
     span: Span,
     data: Option<serde_json::Value>,
 ) -> Result<()> {
-    commands::log(commands::LogRequest {
-        description: description(project, issue, phase, summary),
-        time: Duration::minutes(minutes),
-        extra_tags: Vec::new(),
-        project: Some(project.to_string()),
-        idle: span.idle,
-        trim: span.trim,
-        ended_at: span.ended_at,
-        data,
-        confirm_on_stderr: false,
+    log_entry_gated(project, issue, phase, summary, minutes, span, data, || {
+        Ok(marks::CloseStart::Started)
     })
+    .map(|_| ())
+}
+
+/// [`log_entry`] behind a gate that runs inside the store lock; see [`commands::log_gated`].
+#[allow(clippy::too_many_arguments)]
+fn log_entry_gated(
+    project: &str,
+    issue: &str,
+    phase: &str,
+    summary: &str,
+    minutes: i64,
+    span: Span,
+    data: Option<serde_json::Value>,
+    gate: impl FnOnce() -> Result<marks::CloseStart>,
+) -> Result<marks::CloseStart> {
+    commands::log_gated(
+        commands::LogRequest {
+            description: description(project, issue, phase, summary),
+            time: Duration::minutes(minutes),
+            extra_tags: Vec::new(),
+            project: Some(project.to_string()),
+            idle: span.idle,
+            trim: span.trim,
+            ended_at: span.ended_at,
+            data,
+            confirm_on_stderr: false,
+        },
+        gate,
+    )
 }
 
 /// Everything `tt agent end` closes a phase with apart from the phase itself, so the
@@ -596,6 +617,8 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
     let mut split_at_idle = false;
     // Stays `None` on the explicit-minutes path.
     let mut anchor = None;
+    // The start of the mark this close read; `None` when it read no mark.
+    let mut marked_start = None;
 
     // What this close leaves for the audit: the mark's head on the explicit-minutes
     // path, one stretch per gap `--trim` cuts, nothing at all for `--full`.
@@ -609,6 +632,7 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
             // The one mark read on this path, and only to state what it leaves
             // behind: explicit minutes still close a phase with no mark at all.
             if let Some(marked) = marks::read_phase_in(&dir, mark).ok().flatten() {
+                marked_start = Some(marked.started);
                 let head = (marked.started, Local::now().timestamp() - minutes * 60);
                 if head.1 > head.0 {
                     remainder.push(head);
@@ -625,23 +649,14 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
                 std::process::exit(64);
             };
 
+            marked_start = Some(marked.started);
             // Clamped, so a heartbeat behind the mark is a zero-length phase.
-            let ended = marked
-                .beats
-                .last()
-                .copied()
-                .unwrap_or_else(|| Local::now().timestamp())
-                .max(marked.started);
+            let ended = marked.measured_end(Local::now().timestamp());
             let measured = (ended - marked.started) / 60;
             // The gaps are epochs on this timeline, so the entry ends where it does.
             anchor = Some(instant(ended)?);
 
-            // An unvouched phase is one whole-span silence against the longer grace.
-            let Thresholds { gap, unvouched } = audit::thresholds();
-            let gaps = match marked.beats.is_empty() {
-                true => marks::gaps_over(marked.started, ended, &[], unvouched),
-                false => marks::gaps_over(marked.started, ended, &marked.beats, gap),
-            };
+            let gaps = marked.flagged_gaps(ended, audit::thresholds());
             if gaps.is_empty() {
                 measured
             } else {
@@ -677,9 +692,9 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
         }
     };
 
-    // Written before the entry, so a failure here logs nothing and the retry is safe.
-    marks::start_closing_in(&dir, mark)?;
-    log_entry(
+    // The gate writes the sentinel inside the store lock, before the entry, so a
+    // concurrent closer logs nothing and a failure here logs nothing.
+    let started = log_entry_gated(
         mark.project,
         mark.issue,
         mark.phase,
@@ -691,7 +706,20 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
             ended_at: anchor,
         },
         data,
+        || Ok(marks::begin_close_in(&dir, mark, marked_start)?),
     )?;
+    match started {
+        marks::CloseStart::Started => {}
+        marks::CloseStart::Unfinished => refuse_unfinished_close(mark),
+        marks::CloseStart::Gone => {
+            // Not 64: that code tells an agent to log the phase with `item`.
+            eprintln!(
+                "tt: {} is closed already — another close took it. Nothing was logged here. Do not log it again.",
+                phase_name(mark)
+            );
+            std::process::exit(66);
+        }
+    }
     record_remainder(mark, session, &remainder);
     // Cleared only once the entry is recorded; a refusal leaves the mark and its beats.
     if let Err(err) = marks::cancel_in(&dir, mark) {
@@ -874,7 +902,7 @@ pub const PHASES: [&str; 8] = [
 /// The description `commands::log` is given: the summary, then one tag per axis the
 /// `project` field cannot express — the item (omitted for `-`), the phase, and
 /// `#agent`. There is **no bare `#<project>` tag**; `commands::log` runs `parse_tags`.
-fn description(project: &str, issue: &str, phase: &str, summary: &str) -> String {
+pub(crate) fn description(project: &str, issue: &str, phase: &str, summary: &str) -> String {
     let mut description = strip_stray_tags(summary);
     if issue != "-" {
         description.push_str(&format!(" #{project}/{issue}"));

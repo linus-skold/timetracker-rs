@@ -49,7 +49,13 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("-", "cycle the pane value back"),
         ],
     ),
-    ("Agents", &[("Shift-A", "agent phases on / off")]),
+    (
+        "Agents",
+        &[
+            ("Shift-A", "agent phases on / off"),
+            ("x", "close an open phase: edit and log, or discard"),
+        ],
+    ),
     (
         "Summary",
         &[

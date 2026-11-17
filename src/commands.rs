@@ -9,6 +9,7 @@ use crate::config;
 use crate::duration;
 use crate::entry_edit;
 use crate::icons;
+use crate::marks::CloseStart;
 use crate::naming::{normalize_project, normalize_tags};
 use crate::report;
 use crate::storage::{load_data, with_data};
@@ -239,6 +240,15 @@ pub struct LogRequest {
 /// timeline and must be the mark's last heartbeat whenever `idle` intervals are
 /// passed, or the recorded silence lands outside the entry.
 pub fn log(request: LogRequest) -> Result<()> {
+    log_gated(request, || Ok(CloseStart::Started)).map(|_| ())
+}
+
+/// [`log`], but `gate` runs inside the store lock first. Only `Started` lets the
+/// entry be written; any other answer is returned and nothing is logged.
+pub fn log_gated(
+    request: LogRequest,
+    gate: impl FnOnce() -> Result<CloseStart>,
+) -> Result<CloseStart> {
     let LogRequest {
         description,
         time,
@@ -263,7 +273,11 @@ pub fn log(request: LogRequest) -> Result<()> {
         }
     }
     // Taken out of the closure, so the figure printed is the one written.
-    let stored = with_data(|data| {
+    let outcome = with_data(|data| {
+        let gate_answer = gate()?;
+        if gate_answer != CloseStart::Started {
+            return Ok(Err(gate_answer));
+        }
         let entry_id = data
             .add_entry(
                 desc.clone(),
@@ -285,16 +299,20 @@ pub fn log(request: LogRequest) -> Result<()> {
         if trim {
             let pieces = data.split_at_idle(entry_id);
             if !pieces.is_empty() {
-                return Ok(pieces
+                return Ok(Ok(pieces
                     .iter()
                     .filter_map(|id| data.get_entry(*id))
                     .map(|piece| piece.duration())
-                    .sum());
+                    .sum()));
             }
             // An empty vec is `trim_spans` declining, which leaves the entry whole.
         }
-        Ok(time)
+        Ok(Ok(time))
     })?;
+    let stored = match outcome {
+        Ok(stored) => stored,
+        Err(refused) => return Ok(refused),
+    };
 
     let confirmation = format!(
         "{} Logged: \"{}\"{}{} - Duration: {}",
@@ -308,7 +326,7 @@ pub fn log(request: LogRequest) -> Result<()> {
         true => eprintln!("{confirmation}"),
         false => println!("{confirmation}"),
     }
-    Ok(())
+    Ok(CloseStart::Started)
 }
 
 pub fn today() -> Result<()> {

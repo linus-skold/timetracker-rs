@@ -31,6 +31,7 @@ fn at(
         .unwrap();
     TimeEntry {
         id,
+        uuid: uuid::Uuid::new_v4(),
         description: description.to_string(),
         project: project.map(str::to_string),
         tags: tags.iter().map(|t| t.to_string()).collect(),

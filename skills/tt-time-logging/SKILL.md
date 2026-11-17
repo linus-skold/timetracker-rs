@@ -308,6 +308,9 @@ the plain begin → touch → end flow is enough.
   it may already have recorded the entry. `begin` refuses on the same leftover. Read
   `tt report` first: if the entry is there, `tt agent cancel` the phase to clear the
   leftover; if it is not, cancel and then close the phase again. Never clear it blind.
+- **exit 66, closed already** — another close took the mark while this one ran, and
+  that close logged the phase. Nothing was logged here. **Do not log it again**, and do
+  not use `item`.
 - **exit 74, recorded but not cleared** — the entry **is** in the store and only the
   mark cleanup failed, an unwritable mark directory being the usual cause. **Do not
   retry the close**: a retry is exactly what would log the span twice. Say what

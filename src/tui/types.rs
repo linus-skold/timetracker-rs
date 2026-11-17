@@ -47,6 +47,10 @@ pub enum InputMode {
     /// The `c` popup: numbers the entry columns to choose which show and
     /// their order.
     ColumnPicker,
+    /// The `x` popup: every open agent mark, to pick one to close or drop.
+    MarkPicker,
+    /// The picked mark's prompt: edit it into an entry, or discard it.
+    MarkAction,
 }
 
 /// Which destructive action a prompt is standing in front of. Each knows the key
