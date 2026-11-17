@@ -56,10 +56,41 @@ tt log -d "Fix #frontend bug" -t 2h --tags bugfix
 
 ### `tt today`
 
-Show all entries logged today along with a total.
+Show all entries logged today as a table, with a total. Columns: ID (the entry uuid),
+Title, Start–End (HH:MM–HH:MM, or HH:MM– active while it runs) and Duration.
 
 ```sh
 tt today
+```
+
+---
+
+### `tt show <ref>`
+
+Print one entry as JSON, in the shape `tt edit` accepts. `<ref>` is the numeric id or
+the uuid (any case). An unknown ref is an error.
+
+```sh
+tt show 12
+tt show 3f2b8c1e-5d4a-4e0b-9c7a-1a2b3c4d5e6f
+```
+
+---
+
+### `tt edit [<ref>] --json '<json>'`
+
+Change some fields of one entry. Only the keys you give change. Editable keys:
+`description`, `project` (`null` clears), `tags`, `start_time`, `end_time`
+(`null` makes it active), `idle`, `data` (an object, or `null` to clear).
+
+Name the entry with `<ref>`, or with an `id` or `uuid` key in the JSON. `id` and
+`uuid` only select; they never change. A selector that points at a different entry,
+an unknown key, an `end_time` before `start_time` or a second active entry is an
+error, and nothing is written. When a patch changes `start_time`, `end_time` or `idle`, each `idle` interval must end after it starts and lie inside the entry. `id` may be a number or a numeric string, and `uuid` a uuid string. On success it prints the updated entry as `tt show` does.
+
+```sh
+tt edit 12 --json '{"description": "Review PR", "project": null}'
+tt edit --json '{"id": 12, "end_time": null}'
 ```
 
 ---

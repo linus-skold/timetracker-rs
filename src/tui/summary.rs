@@ -869,6 +869,7 @@ mod tests {
     fn entry_at(start: NaiveDateTime) -> TimeEntry {
         TimeEntry {
             id: 0,
+            uuid: uuid::Uuid::new_v4(),
             description: "seed".to_string(),
             project: Some("tt".to_string()),
             tags: Vec::new(),
@@ -999,6 +1000,7 @@ mod tests {
     fn spanning(id: u64, project: &str, start: NaiveDateTime, minutes: i64) -> TimeEntry {
         let start = start.and_local_timezone(chrono::Local).unwrap();
         TimeEntry {
+            uuid: uuid::Uuid::new_v4(),
             id,
             description: "seed".to_string(),
             project: Some(project.to_string()),

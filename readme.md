@@ -37,6 +37,8 @@ Shell completion: `eval "$(tt completions)"` in your shell's rc file — see [do
 tt start Working on login page
 tt stop
 tt today
+tt show 1
+tt edit 1 --json '{"description": "New title"}'
 ```
 
 See [docs/usage.md](docs/usage.md) for the full command reference, duration

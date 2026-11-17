@@ -386,6 +386,8 @@ pub struct Store {
 
 #[derive(Debug, serde::Deserialize)]
 pub struct Entry {
+    #[serde(default)]
+    pub uuid: Option<String>,
     pub description: String,
     #[serde(default)]
     pub project: Option<String>,

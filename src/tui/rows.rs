@@ -349,6 +349,7 @@ mod tests {
             .and_local_timezone(Local)
             .unwrap();
         TimeEntry {
+            uuid: uuid::Uuid::new_v4(),
             id,
             description: description.to_string(),
             project: Some("tt".to_string()),

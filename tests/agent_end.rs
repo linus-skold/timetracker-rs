@@ -714,6 +714,70 @@ fn a_mark_derived_entry_ends_at_the_marks_last_heartbeat() {
     assert!(!entry.idle.is_empty(), "the fixture's hole was recorded");
 }
 
+/// The duration floors to whole minutes, so the entry starts after the mark.
+/// The first gap starts at the mark and `tt log` must still accept it.
+#[test]
+fn a_span_of_part_minutes_clamps_the_first_gap_to_the_entry_start() {
+    let case = Case::new("idle-part-minute-span");
+    let start = now() - 6100;
+    let beats = [start + 3000, start + 6030];
+    case.write_mark("proj.12.plan", start);
+    case.beats_at("proj.12.plan", &beats);
+
+    case.run(&["end", "proj", "12", "plan", "planned the thing", "--full"])
+        .assert_status(0);
+
+    let entries = case.store().entries;
+    let entry_start = entries[0].start_time.timestamp();
+    assert_eq!(
+        entry_start,
+        start + 30,
+        "100 whole minutes back from the end"
+    );
+    let recorded: Vec<(i64, i64)> = entries[0].idle.iter().map(|gap| gap.epochs()).collect();
+    assert_eq!(
+        recorded,
+        vec![(entry_start, beats[0]), (beats[0], beats[1])]
+    );
+}
+
+/// Rounding up moves the entry start before the mark, so no clamp applies.
+#[test]
+fn a_rounded_up_span_keeps_the_first_gap_at_the_mark() {
+    let case = Case::new("idle-rounded-span");
+    case.write_config("[agent]\nround_minutes = 5\n");
+    let start = now() - 6200;
+    let beats = [start + 3000, start + 6090];
+    case.write_mark("proj.12.plan", start);
+    case.beats_at("proj.12.plan", &beats);
+
+    case.run(&["end", "proj", "12", "plan", "planned the thing", "--full"])
+        .assert_status(0);
+
+    let entry = &case.store().entries[0];
+    assert_eq!(entry.start_time.timestamp(), beats[1] - 105 * 60);
+    let recorded: Vec<(i64, i64)> = entry.idle.iter().map(|gap| gap.epochs()).collect();
+    assert_eq!(recorded, vec![(start, beats[0]), (beats[0], beats[1])]);
+}
+
+/// `--trim` still logs a span of part minutes once its first gap is clamped.
+#[test]
+fn trim_on_a_span_of_part_minutes_cuts_the_clamped_gap() {
+    let case = Case::new("idle-trim-part-minute");
+    let start = now() - 6100;
+    let beats = [start + 3000, start + 3600, start + 6030];
+    case.write_mark("proj.12.plan", start);
+    case.beats_at("proj.12.plan", &beats);
+
+    case.run(&["end", "proj", "12", "plan", "planned the thing", "--trim"])
+        .assert_status(0);
+
+    let entries = case.store().entries;
+    assert_eq!(entries.len(), 1, "the gap touches the start, so one piece");
+    assert_eq!(entries[0].start_time.timestamp(), beats[0]);
+    assert_eq!(entries[0].end_time.unwrap().timestamp(), beats[2]);
+}
+
 /// The **stored span** is the assertion: stdout's figure and an empty `idle` are
 /// both satisfied by a split that subtracted twice and left a fragment behind.
 #[test]

@@ -24,6 +24,7 @@ fn entry_at(id: u64, description: String, tag: Option<&str>, minutes: i64) -> Ti
         .unwrap();
     let start = midnight + Duration::minutes(minutes);
     TimeEntry {
+        uuid: uuid::Uuid::new_v4(),
         id,
         description,
         project: Some("tt".to_string()),

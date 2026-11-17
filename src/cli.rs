@@ -74,6 +74,22 @@ pub enum Commands {
     },
     /// Show all entries for today
     Today,
+    /// Print one entry as JSON, in the shape `tt edit` accepts
+    Show {
+        /// Entry id or uuid
+        #[arg(value_name = "REF")]
+        entry: String,
+    },
+    /// Change some fields of one entry with a JSON patch
+    Edit {
+        /// Entry id or uuid; or put an "id" or "uuid" key in the JSON
+        #[arg(value_name = "REF")]
+        entry: Option<String>,
+        /// Keys to change: description, project, tags, start_time, end_time,
+        /// idle, data. Keys you leave out stay as they are.
+        #[arg(long)]
+        json: String,
+    },
     /// Show all entries
     List {
         /// Maximum number of entries to show (defaults to the `list.default_limit`

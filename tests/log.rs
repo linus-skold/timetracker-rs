@@ -61,24 +61,45 @@ fn a_plain_log_still_reports_the_span_it_was_asked_for() {
 }
 
 #[test]
-fn idle_covering_the_whole_span_leaves_the_entry_and_reports_it_whole() {
-    // `trim_spans` declines rather than deleting the entry, so nothing is subtracted.
-    let case = Case::new("log-trim-declines");
+fn idle_outside_the_span_is_rejected_and_the_store_is_unchanged() {
+    let case = Case::new("log-idle-outside");
+    case.run_bare(&["log", "-d", "first", "-t", "10m"])
+        .assert_status(0);
     let now = common::now();
 
     let run = case.run_bare(&[
         "log",
         "-d",
-        "swallowed whole",
+        "idle sticks out",
         "-t",
         "30m",
         &format!("--idle={}-{}", now - 90 * 60, now + 90 * 60),
         "--trim",
     ]);
-    run.assert_status(0);
 
-    let entries = case.store().entries;
-    assert_eq!(entries.len(), 1, "nothing was split");
-    assert_eq!(entries[0].seconds(), 30 * 60);
-    assert_eq!(printed_minutes(&run.stdout), 30);
+    assert_ne!(run.status, Some(0), "stdout: {:?}", run.stdout);
+    assert!(
+        run.stderr.contains("lie inside the entry"),
+        "stderr: {:?}",
+        run.stderr
+    );
+    assert_eq!(case.store().entries.len(), 1, "the bad log wrote nothing");
+}
+
+#[test]
+fn idle_inside_the_span_is_accepted() {
+    let case = Case::new("log-idle-inside");
+    let now = common::now();
+
+    case.run_bare(&[
+        "log",
+        "-d",
+        "idle within",
+        "-t",
+        "60m",
+        &format!("--idle={}-{}", now - 40 * 60, now - 20 * 60),
+    ])
+    .assert_status(0);
+
+    assert_eq!(case.store().entries[0].idle.len(), 1);
 }
