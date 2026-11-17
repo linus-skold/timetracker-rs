@@ -138,12 +138,20 @@ fn parse_data(value: &Value) -> Result<Option<Value>> {
         .map_err(|e| anyhow!("bad value for \"data\": {e}"))
 }
 
-/// `tt log --idle` can store idle outside the span, so an edit that leaves
-/// the span and idle alone must not fail on it.
+/// Entries stored before `tt log` checked idle can hold idle outside the
+/// span, so an edit that leaves the span and idle alone must not fail on it.
 fn check_idle_bounds(edited: &TimeEntry) -> Result<()> {
-    for gap in &edited.idle {
-        let inside =
-            gap.start >= edited.start_time && edited.end_time.is_none_or(|end| gap.end <= end);
+    check_idle_within(edited.start_time, edited.end_time, &edited.idle)
+}
+
+/// Touching the start or the end is allowed.
+pub fn check_idle_within(
+    start: DateTime<Local>,
+    end: Option<DateTime<Local>>,
+    idle: &[IdleInterval],
+) -> Result<()> {
+    for gap in idle {
+        let inside = gap.start >= start && end.is_none_or(|end| gap.end <= end);
         if gap.end < gap.start || !inside {
             bail!("idle interval must have end after start and lie inside the entry");
         }

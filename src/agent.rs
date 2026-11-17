@@ -643,9 +643,18 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
                 measured
             } else {
                 // One interval per flagged gap whether or not the caller trimmed.
+                // The duration floors to whole minutes, so the entry can start
+                // after the mark; clamp the gaps to the entry.
+                let entry_start = ended - round_to(measured, round_minutes()) * 60;
                 idle = gaps
                     .iter()
-                    .map(|&(from, to)| Ok(IdleInterval::new(instant(from)?, instant(to)?)))
+                    .filter(|&&(_, to)| to > entry_start)
+                    .map(|&(from, to)| {
+                        Ok(IdleInterval::new(
+                            instant(from.max(entry_start))?,
+                            instant(to)?,
+                        ))
+                    })
                     .collect::<Result<Vec<_>>>()?;
                 // Every over-threshold gap. Reported, never logged: `split_at_idle` subtracts.
                 let silent: i64 = gaps.iter().map(|(from, to)| (to - from) / 60).sum();

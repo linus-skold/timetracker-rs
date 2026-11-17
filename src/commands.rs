@@ -250,6 +250,8 @@ pub fn log(request: LogRequest) -> Result<()> {
     } = request;
     let end_time = ended_at.unwrap_or_else(Local::now);
     let start_time = end_time - time;
+    // Before the store opens, so a bad interval writes nothing.
+    crate::entry_edit::check_idle_within(start_time, Some(end_time), &idle)?;
 
     let (desc, mut tags) = parse_tags(&description);
     for tag in extra_tags {
