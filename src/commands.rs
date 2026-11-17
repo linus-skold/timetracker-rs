@@ -762,16 +762,21 @@ mod tests {
             Some("Timetracker".into()),
             vec![],
             now,
-            Some(now),
+            Some(now + chrono::Duration::minutes(30)),
         );
         let today = now.date_naive();
         let flags = (true, false, None, None);
+        let tracked = |project: &str| -> i64 {
+            let json = report_output(&data, today, flags, Some(project.into()), true).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+            value["total_seconds"].as_i64().unwrap()
+        };
 
         let text = report_output(&data, today, flags, Some("TimeTracker".into()), true).unwrap();
         assert!(text.contains("timetracker"), "{text}");
         assert!(!text.contains("TimeTracker"), "{text}");
-        let other = report_output(&data, today, flags, Some("nope".into()), true).unwrap();
-        assert_ne!(text, other);
+        assert_eq!(tracked("TimeTracker"), 30 * 60, "{text}");
+        assert_eq!(tracked("nope"), 0);
     }
 
     #[test]
