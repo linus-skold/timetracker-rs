@@ -7,7 +7,7 @@ use super::entry_form::EntryFields;
 use super::types::InputMode;
 use crate::marks;
 use anyhow::Result;
-use chrono::{Duration, Local};
+use chrono::{Duration, DurationRound, Local};
 
 /// How the form shows a time, as `start_editing` does.
 const FORM_TIME_FORMAT: &str = "%Y-%m-%d %H:%M";
@@ -18,6 +18,11 @@ fn mark_is_still_open(dir: &std::path::Path, mark: &marks::Mark) -> bool {
         marks::read_phase_in(dir, mark.as_key()),
         Ok(Some(phase)) if phase.started == mark.start.timestamp()
     )
+}
+
+/// The time cut to the minute, as `FORM_TIME_FORMAT` shows it.
+fn whole_minute(time: chrono::DateTime<Local>) -> chrono::DateTime<Local> {
+    time.duration_trunc(Duration::minutes(1)).unwrap_or(time)
 }
 
 fn closed_already(mark: &marks::Mark) -> String {
@@ -146,8 +151,9 @@ impl App {
             .set_from(&mark.start.format(FORM_TIME_FORMAT).to_string());
         self.input_end_time
             .set_from(&end.format(FORM_TIME_FORMAT).to_string());
+        // Between the minutes the form shows, so Duration agrees with Start/End.
         self.input_duration.set_from(&crate::duration::format(
-            (end - mark.start).max(Duration::zero()),
+            (whole_minute(end) - whole_minute(mark.start)).max(Duration::zero()),
         ));
         self.input_data
             .set_from(&crate::entry_data::to_edit_string(label_data.as_ref()));

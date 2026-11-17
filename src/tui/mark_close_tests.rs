@@ -141,6 +141,30 @@ fn the_prefilled_end_is_the_last_beat() {
 }
 
 #[test]
+fn the_prefilled_duration_spans_the_minutes_the_form_shows() {
+    let _guard = env_guard();
+    let (mut app, dir) = app_with_mark("mark-close-minutes");
+    // Start 10:00:50 and end 10:30:10 show as 10:00 and 10:30: 30m, not 29m.
+    let top_of_hour = chrono::Local::now().timestamp() / 3600 * 3600 - 7200;
+    std::fs::write(dir.join(MARK_KEY), format!("{}\n", top_of_hour + 50)).unwrap();
+    std::fs::create_dir_all(dir.join("beats")).unwrap();
+    std::fs::write(
+        dir.join("beats").join(MARK_KEY),
+        format!("{}\n", top_of_hour + 30 * 60 + 10),
+    )
+    .unwrap();
+    app.marks_stamp = None;
+    app.sync_from_marks();
+
+    open_close_form(&mut app);
+
+    assert_eq!(
+        app.input_duration.value(),
+        crate::duration::format(chrono::Duration::minutes(30))
+    );
+}
+
+#[test]
 fn x_without_marks_opens_nothing_and_says_so() {
     let _guard = env_guard();
     sandbox("mark-close-none");
