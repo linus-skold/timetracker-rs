@@ -489,7 +489,7 @@ fn item(
         issue,
         phase,
         summary,
-        minutes,
+        round_to(minutes, round_minutes()),
         Span::unmarked(),
         data,
     )
@@ -527,6 +527,7 @@ impl Span {
 }
 
 /// Log the entry both `item` and `end` end at; every tag is already in the description.
+/// `minutes` is already rounded, so the caller and the stored span agree.
 fn log_entry(
     project: &str,
     issue: &str,
@@ -538,7 +539,7 @@ fn log_entry(
 ) -> Result<()> {
     commands::log(commands::LogRequest {
         description: description(project, issue, phase, summary),
-        time: Duration::minutes(round_to(minutes, round_minutes())),
+        time: Duration::minutes(minutes),
         extra_tags: Vec::new(),
         project: Some(project.to_string()),
         idle: span.idle,
@@ -600,6 +601,8 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
     // path, one stretch per gap `--trim` cuts, nothing at all for `--full`.
     let mut remainder: Vec<(i64, i64)> = Vec::new();
 
+    // Read once: the clamp and the stored start must use the same step.
+    let step = round_minutes();
     let minutes = match minutes {
         Some(raw) => {
             let minutes = whole_minutes(raw);
@@ -645,7 +648,7 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
                 // One interval per flagged gap whether or not the caller trimmed.
                 // The duration floors to whole minutes, so the entry can start
                 // after the mark; clamp the gaps to the entry.
-                let entry_start = ended - round_to(measured, round_minutes()) * 60;
+                let entry_start = ended - round_to(measured, step) * 60;
                 idle = gaps
                     .iter()
                     .filter(|&&(_, to)| to > entry_start)
@@ -681,7 +684,7 @@ fn end(mark: MarkRef, close: Close) -> Result<()> {
         mark.issue,
         mark.phase,
         summary,
-        minutes,
+        round_to(minutes, step),
         Span {
             idle,
             trim: split_at_idle,
