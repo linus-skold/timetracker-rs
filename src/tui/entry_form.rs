@@ -443,10 +443,11 @@ impl App {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     /// The date `a` pre-fills from: the selected entry's, or the group's on a
-    /// group header.
+    /// group or project header.
     fn date_under_cursor(&self) -> Option<chrono::NaiveDate> {
         match self.cursor_anchor()? {
-            super::rows::CursorAnchor::Header { date, .. } => Some(date),
+            super::rows::CursorAnchor::Header { date, .. }
+            | super::rows::CursorAnchor::Project { date, .. } => Some(date),
             super::rows::CursorAnchor::Entry(id) => self
                 .data
                 .get_entry(id)

@@ -70,6 +70,8 @@ impl FilterKey {
 pub(crate) struct RowKey {
     filter: FilterKey,
     expanded: HashSet<String>,
+    group_by_project: bool,
+    collapsed_projects: HashSet<String>,
 }
 
 impl RowKey {
@@ -77,6 +79,8 @@ impl RowKey {
         Self {
             filter: FilterKey::of(app),
             expanded: app.expanded_issues.clone(),
+            group_by_project: app.group_by_project,
+            collapsed_projects: app.collapsed_projects.clone(),
         }
     }
 }

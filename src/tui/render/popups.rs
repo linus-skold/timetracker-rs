@@ -28,7 +28,8 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("e", "edit selected entry"),
             ("d", "delete selected entry (asks first)"),
             ("s", "stop active entry"),
-            ("g", "toggle the issue group"),
+            ("g", "toggle the issue or project group"),
+            ("p", "group the entries by project"),
             ("Enter", "detail, or toggle a group"),
             // A path, not a key: the trim is live only while the popover is open.
             ("Enter, t", "trim idle from the entry (asks first)"),

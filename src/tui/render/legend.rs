@@ -20,6 +20,7 @@ pub(super) fn content_legend(app: &App, width: u16) -> Option<Line<'static>> {
             ("o", "sort order", false),
             ("g", "issue group", false),
             ("c", "columns", false),
+            ("p", "by project", false),
         ],
         width,
     )

@@ -2,9 +2,11 @@ use super::columns::EntryColumn;
 use super::entry_scroll::{clamp_offset, reveal_group_offset};
 use super::legend::content_legend;
 use super::overlay::CURSOR_MARKER;
+use super::project_header::project_header_row;
 use super::view_header::{content_title, render_view_selector};
 use crate::tracker::TimeData;
 use crate::tui::panes::Polarity;
+use crate::tui::project_rows::rows_under_project_header;
 use crate::tui::rows::{GroupHeader, Member, VisibleRow};
 use crate::tui::summary::project_key;
 use crate::tui::types::Focus;
@@ -106,6 +108,25 @@ fn entry_cell(
     }
 }
 
+/// The tree stroke that opens a row's description.
+pub(super) fn tree_connector(last: bool) -> &'static str {
+    if last {
+        "\u{2514}\u{2500}\u{2500} "
+    } else {
+        "\u{251c}\u{2500}\u{2500} "
+    }
+}
+
+/// The indent of an issue member inside a project. The project's stroke runs
+/// on while the issue is not the project's last child.
+fn outer_stroke(outer_last: Option<bool>) -> &'static str {
+    match outer_last {
+        None => "",
+        Some(true) => "    ",
+        Some(false) => "\u{2502}   ",
+    }
+}
+
 /// One entry's row. A member row hangs off its group header's tree connector
 /// and carries the tint rather than the stripe.
 fn entry_row(
@@ -135,8 +156,12 @@ fn entry_row(
     // The connector opens in the column the group header's chevron sits in, so
     // its stroke runs unbroken from the header down to the last member.
     let description = match member {
-        Some(member) if member.last => format!("\u{2514}\u{2500}\u{2500} {}", entry.description),
-        Some(_) => format!("\u{251c}\u{2500}\u{2500} {}", entry.description),
+        Some(member) => format!(
+            "{}{}{}",
+            outer_stroke(member.outer_last),
+            tree_connector(member.last),
+            entry.description
+        ),
         None => entry.description.clone(),
     };
 
@@ -151,7 +176,7 @@ fn entry_row(
 
 /// The live sum of the entries at `members`. Summed per frame and never
 /// cached: a running member's duration moves with the clock.
-fn members_total(entries: &[crate::tracker::TimeEntry], members: &[usize]) -> Duration {
+pub(super) fn members_total(entries: &[crate::tracker::TimeEntry], members: &[usize]) -> Duration {
     members
         .iter()
         .filter_map(|index| entries.get(*index))
@@ -273,8 +298,9 @@ fn group_header_row(
     } else {
         ""
     };
+    let branch = header.branch.map(tree_connector).unwrap_or_default();
     let label = format!(
-        "{chevron} {} entries - {}",
+        "{branch}{chevron} {} entries - {}",
         header.members.len(),
         header.tag
     );
@@ -331,6 +357,15 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
                 let total = day_totals.get(date).copied().unwrap_or_else(Duration::zero);
                 rows.push(day_header_row(&app.entry_columns, *date, total));
                 heights.push(usize::from(DAY_HEADER_HEIGHT));
+            }
+            VisibleRow::ProjectHeader(header) => {
+                visual_of_selectable.push(rows.len());
+                heights.push(1);
+                rows.push(project_header_row(
+                    &app.entry_columns,
+                    header,
+                    &app.data.entries,
+                ));
             }
             VisibleRow::GroupHeader(header) => {
                 visual_of_selectable.push(rows.len());
@@ -429,10 +464,20 @@ pub(super) fn render_entries_table(f: &mut Frame, app: &mut App, area: Rect) {
     let viewport = usize::from(table_area.height.saturating_sub(1));
     let mut offset = clamp_offset(app.entry_scroll_offset, &heights, viewport);
     if std::mem::take(&mut app.reveal_group_members)
-        && let (Some(group_row), Some(VisibleRow::GroupHeader(header))) =
-            (visual_selected, app.selected_row())
+        && let Some(group_row) = visual_selected
     {
-        offset = reveal_group_offset(offset, group_row, header.members.len(), &heights, viewport);
+        let member_count = match app.selected_row() {
+            Some(VisibleRow::GroupHeader(header)) => Some(header.members.len()),
+            // Expanded issue groups add rows beyond the member count.
+            Some(VisibleRow::ProjectHeader(_)) => app
+                .table_state
+                .selected()
+                .and_then(|idx| rows_under_project_header(&model, idx)),
+            _ => None,
+        };
+        if let Some(count) = member_count {
+            offset = reveal_group_offset(offset, group_row, count, &heights, viewport);
+        }
     }
     let mut render_state = TableState::default()
         .with_selected(visual_selected)

@@ -14,6 +14,8 @@ pub(crate) enum VisibleRow {
     DayHeader {
         date: NaiveDate,
     },
+    /// One project's entries in one day partition; only with project grouping.
+    ProjectHeader(ProjectHeader),
     GroupHeader(GroupHeader),
     Entry {
         index: usize,
@@ -26,17 +28,53 @@ pub(crate) enum VisibleRow {
 /// anchors by tag, never by a member's id: resolving an id would prefer that
 /// member's own row and slide the cursor off the header it was on.
 pub(crate) enum CursorAnchor {
-    Header { tag: String, date: NaiveDate },
+    /// `project` is set only while grouping, as the same tag can sit in two
+    /// projects on one day.
+    Header {
+        tag: String,
+        date: NaiveDate,
+        project: Option<String>,
+    },
+    Project {
+        project: String,
+        date: NaiveDate,
+    },
     Entry(u64),
+}
+
+/// The header a member row hangs under.
+#[derive(Clone, PartialEq)]
+pub(crate) enum Owner {
+    /// An issue group, by item tag.
+    Issue(String),
+    /// A project header, by project key.
+    Project(String),
 }
 
 /// A member row's place under its group header.
 #[derive(Clone, PartialEq)]
 pub(crate) struct Member {
-    /// The item tag of the group whose header sits above this row.
-    pub(crate) tag: String,
+    /// The group whose header sits above this row.
+    pub(crate) owner: Owner,
     /// The group's last member, which closes the tree with `\u{2514}`.
     pub(crate) last: bool,
+    /// For an issue member inside a project: whether that issue is the
+    /// project's last child, which decides if the outer stroke continues.
+    pub(crate) outer_last: Option<bool>,
+}
+
+/// One project's entries in one day partition, summarised for its header row.
+#[derive(Clone, PartialEq)]
+pub(crate) struct ProjectHeader {
+    /// The project key; `NO_PROJECT` for a missing or blank project.
+    pub(crate) project: String,
+    /// Indices into `data.entries`, in the order `filtered_entries` gave them.
+    pub(crate) members: Vec<usize>,
+    pub(crate) expanded: bool,
+    /// The earliest member's start, and the latest member's end — `None` while
+    /// any member is still running.
+    pub(crate) start: DateTime<Local>,
+    pub(crate) end: Option<DateTime<Local>>,
 }
 
 /// One issue's entries, summarised for the collapsed row.
@@ -53,6 +91,8 @@ pub(crate) struct GroupHeader {
     pub(crate) end: Option<DateTime<Local>>,
     /// The members' project when every member agrees; `None` otherwise.
     pub(crate) project: Option<String>,
+    /// Inside a project: `Some(last)` for this header's tree connector.
+    pub(crate) branch: Option<bool>,
 }
 
 impl VisibleRow {
@@ -101,6 +141,12 @@ impl App {
                             if header.members.iter().any(is_id))
                     })
                 })
+                .or_else(|| {
+                    selectable().position(|row| {
+                        matches!(row, VisibleRow::ProjectHeader(header)
+                            if header.members.iter().any(is_id))
+                    })
+                })
         })
     }
 
@@ -115,24 +161,33 @@ impl App {
             VisibleRow::GroupHeader(header) => Some(CursorAnchor::Header {
                 tag: header.tag,
                 date: header.start.date_naive(),
+                project: header.project.filter(|_| self.group_by_project),
+            }),
+            VisibleRow::ProjectHeader(header) => Some(CursorAnchor::Project {
+                project: header.project,
+                date: header.start.date_naive(),
             }),
             VisibleRow::DayHeader { .. } => None,
         }
     }
 
     /// Where `anchor` sits now. A header anchor prefers the header in the day
-    /// segment it was in, then any header for the tag.
+    /// segment it was in, then any header for the tag or project.
     pub(crate) fn selectable_index_for(&self, anchor: &CursorAnchor) -> Option<usize> {
-        let (tag, date) = match anchor {
-            CursorAnchor::Entry(id) => return self.selectable_index_of(*id),
-            CursorAnchor::Header { tag, date } => (tag, date),
-        };
-        let is_header = |row: &VisibleRow, same_day: bool| match row {
-            VisibleRow::GroupHeader(header) => {
-                header.tag == *tag && (!same_day || header.start.date_naive() == *date)
+        let is_header = |row: &VisibleRow, same_day: bool| match (row, anchor) {
+            (VisibleRow::GroupHeader(header), CursorAnchor::Header { tag, date, project }) => {
+                header.tag == *tag
+                    && (!same_day || header.start.date_naive() == *date)
+                    && (project.is_none() || header.project == *project)
+            }
+            (VisibleRow::ProjectHeader(header), CursorAnchor::Project { project, date }) => {
+                header.project == *project && (!same_day || header.start.date_naive() == *date)
             }
             _ => false,
         };
+        if let CursorAnchor::Entry(id) = anchor {
+            return self.selectable_index_of(*id);
+        }
         self.with_rows(|rows| {
             let selectable = || rows.iter().filter(|row| row.is_selectable());
             selectable()
@@ -165,12 +220,20 @@ impl App {
                     }
                 }
             }
+            Some(VisibleRow::ProjectHeader(header)) => self.toggle_project(&header.project),
             Some(VisibleRow::Entry {
                 index,
                 member: Some(member),
             }) => {
                 let id = self.data.entries.get(index).map(|entry| entry.id);
-                self.expanded_issues.remove(&member.tag);
+                match member.owner {
+                    Owner::Issue(tag) => {
+                        self.expanded_issues.remove(&tag);
+                    }
+                    Owner::Project(project) => {
+                        self.collapsed_projects.insert(project);
+                    }
+                }
                 // Collapsed, the id has no row of its own, so this resolves to
                 // the header holding it — in Week view, the right day's.
                 if let Some(id) = id {
@@ -205,7 +268,7 @@ impl App {
         let mut rows = Vec::with_capacity(indices.len());
 
         if self.view_mode != ViewMode::Week {
-            self.push_segment(&indices, &mut rows);
+            self.push_partition(&indices, &mut rows);
             return rows;
         }
 
@@ -218,20 +281,20 @@ impl App {
             };
             let date = entry.start_time.date_naive();
             if current != Some(date) {
-                self.push_segment(&segment, &mut rows);
+                self.push_partition(&segment, &mut rows);
                 segment.clear();
                 current = Some(date);
                 rows.push(VisibleRow::DayHeader { date });
             }
             segment.push(index);
         }
-        self.push_segment(&segment, &mut rows);
+        self.push_partition(&segment, &mut rows);
         rows
     }
 
     /// Append one day partition's rows: an issue with two or more entries as a
     /// group header, anything else as the plain entry row it is today.
-    fn push_segment(&self, segment: &[usize], rows: &mut Vec<VisibleRow>) {
+    pub(super) fn push_segment(&self, segment: &[usize], rows: &mut Vec<VisibleRow>) {
         enum Slot {
             Entry(usize),
             Group(usize),
@@ -279,8 +342,9 @@ impl App {
                             VisibleRow::Entry {
                                 index: *index,
                                 member: Some(Member {
-                                    tag: tag.to_string(),
+                                    owner: Owner::Issue(tag.to_string()),
                                     last: nth == last,
+                                    outer_last: None,
                                 }),
                             }
                         }));
@@ -295,6 +359,7 @@ impl App {
     /// [`RowKey`] has no clock input, so the sums are the renderer's per frame.
     fn summarise(&self, tag: &str, members: &[usize]) -> GroupHeader {
         let entries = || members.iter().filter_map(|i| self.data.entries.get(*i));
+        let (start, end) = self.member_span(members);
         let mut projects = entries().map(crate::tui::summary::project_key);
         let first = projects.next();
         let project = if projects.all(|p| Some(p) == first) {
@@ -305,18 +370,31 @@ impl App {
         GroupHeader {
             tag: tag.to_string(),
             project,
+            branch: None,
             members: members.to_vec(),
             expanded: self.expanded_issues.contains(tag),
-            start: entries()
-                .map(|e| e.start_time)
-                .min()
-                .unwrap_or_else(Local::now),
-            end: if entries().any(|e| e.end_time.is_none()) {
-                None
-            } else {
-                entries().filter_map(|e| e.end_time).max()
-            },
+            start,
+            end,
         }
+    }
+
+    /// The earliest start and the latest end of `members`; the end is `None`
+    /// while any member is still running.
+    pub(super) fn member_span(
+        &self,
+        members: &[usize],
+    ) -> (DateTime<Local>, Option<DateTime<Local>>) {
+        let entries = || members.iter().filter_map(|i| self.data.entries.get(*i));
+        let start = entries()
+            .map(|e| e.start_time)
+            .min()
+            .unwrap_or_else(Local::now);
+        let end = if entries().any(|e| e.end_time.is_none()) {
+            None
+        } else {
+            entries().filter_map(|e| e.end_time).max()
+        };
+        (start, end)
     }
 }
 
@@ -368,6 +446,7 @@ mod tests {
             .iter()
             .map(|row| match row {
                 VisibleRow::DayHeader { date } => format!("day {date}"),
+                VisibleRow::ProjectHeader(header) => format!("project {}", header.project),
                 VisibleRow::GroupHeader(header) => format!(
                     "group {} {} {}",
                     header.tag,
