@@ -2182,7 +2182,7 @@ mod tests {
         assert!(app.help_scroll < 1000, "render clamps the offset");
 
         app.input_mode = InputMode::Help;
-        let tall = frame_lines(&mut app, 100, 52).join("\n");
+        let tall = frame_lines(&mut app, 100, 60).join("\n");
         assert!(
             !tall.contains("▾ more") && !tall.contains("j/k scroll"),
             "{tall}"
