@@ -152,7 +152,7 @@ fn typed_project<I: Iterator<Item = String>>(args: I) -> Option<String> {
         .ok()?;
     let (_, sub) = matches.subcommand()?.1.subcommand()?;
     let project = sub.get_one::<String>("project")?;
-    (!project.is_empty()).then(|| project.clone())
+    (!project.is_empty()).then(|| crate::naming::normalize_name(project))
 }
 
 #[cfg(test)]
@@ -207,6 +207,19 @@ mod tests {
         Nu.write_complete(&mut Cli::command(), args, None, &mut buf)
             .unwrap();
         serde_json::from_slice(&buf).unwrap()
+    }
+
+    #[test]
+    fn projects_that_differ_only_in_case_complete_once() {
+        let _guard = crate::storage::env_guard();
+        crate::storage::env_sandbox("completions-case");
+        let mut stored = data(vec![entry(Some("x"), &[]), entry(Some("x"), &[])]);
+        stored.entries[0].project = Some("Project1".into());
+        stored.entries[1].project = Some("project1".into());
+        crate::storage::save_data(&stored).unwrap();
+
+        let names = project_names(&store(), &[mark("project1", None)]);
+        assert_eq!(names.into_iter().collect::<Vec<_>>(), ["project1"]);
     }
 
     #[test]
@@ -302,6 +315,12 @@ mod tests {
     #[test]
     fn typed_project_reads_the_agent_positional() {
         let a = argv(&["/bin/tt", "--", "tt", "agent", "begin", "proj", ""]);
+        assert_eq!(typed_project(a), Some("proj".to_string()));
+    }
+
+    #[test]
+    fn typed_project_is_lowercased_to_match_stored_names() {
+        let a = argv(&["/bin/tt", "--", "tt", "agent", "begin", "Proj", ""]);
         assert_eq!(typed_project(a), Some("proj".to_string()));
     }
 

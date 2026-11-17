@@ -82,7 +82,9 @@ pub fn load_data() -> Result<tracker::TimeData> {
     let path = get_data_path()?;
     if path.exists() {
         let content = fs::read_to_string(&path)?;
-        Ok(serde_json::from_str(&content)?)
+        let mut data: tracker::TimeData = serde_json::from_str(&content)?;
+        crate::naming::normalize_store(&mut data);
+        Ok(data)
     } else {
         Ok(tracker::TimeData::default())
     }

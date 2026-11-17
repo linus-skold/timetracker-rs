@@ -297,7 +297,7 @@ fn read_mark(dir: &Path, name: &OsString) -> Option<Mark> {
     let start = read_start(&dir.join(name))?;
     let (project, issue, phase, agent) = split_key(name.to_str()?);
     Some(Mark {
-        project,
+        project: crate::naming::normalize_name(&project),
         issue,
         phase,
         agent,
@@ -357,7 +357,7 @@ pub fn mark_key(mark: MarkRef) -> String {
     let segment = crate::paths::sanitise_key;
     let mut key = format!(
         "{}.{}.{}",
-        segment(mark.project),
+        project_key(mark.project),
         segment(mark.issue),
         segment(mark.phase)
     );
@@ -368,20 +368,42 @@ pub fn mark_key(mark: MarkRef) -> String {
     key
 }
 
+/// `folder/key`, or a file from before projects were lowercased whose key
+/// differs only in the case of the project segment. Never renames the file.
+fn path_in(folder: PathBuf, key: &str) -> PathBuf {
+    let exact = folder.join(key);
+    if exact.exists() {
+        return exact;
+    }
+    let same_but_project_case = |name: &str| match (name.split_once('.'), key.split_once('.')) {
+        (Some((old, old_rest)), Some((new, new_rest))) => {
+            old.to_lowercase() == new && old_rest == new_rest
+        }
+        _ => false,
+    };
+    fs::read_dir(&folder)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .find(|e| e.file_name().to_str().is_some_and(same_but_project_case))
+        .map(|e| e.path())
+        .unwrap_or(exact)
+}
+
 pub fn mark_path(dir: &Path, key: &str) -> PathBuf {
-    dir.join(key)
+    path_in(dir.to_path_buf(), key)
 }
 
 /// The heartbeat file for `key` inside `dir`: a `beats/` **subdirectory**, never
 /// a `<mark>.<suffix>` sibling.
 pub fn beats_path(dir: &Path, key: &str) -> PathBuf {
-    dir.join("beats").join(key)
+    path_in(dir.join("beats"), key)
 }
 
 /// The in-progress-close sentinel for `key` inside `dir`: a `closing/`
 /// **subdirectory** entry, so the mark listing's file-type filter skips it.
 pub fn closing_path(dir: &Path, key: &str) -> PathBuf {
-    dir.join("closing").join(key)
+    path_in(dir.join("closing"), key)
 }
 
 /// Open a mark for one phase, or report the one already open. `create_new` keeps
@@ -692,6 +714,41 @@ mod tests {
         assert!(!beats_path(&dir, "b.9.impl").exists());
         assert!(!beats_path(&dir, "a.7.review").exists());
         assert_eq!(fs::read_dir(dir.join("beats")).unwrap().count(), 3);
+    }
+
+    #[test]
+    fn a_mixed_case_mark_file_is_found_and_cancelled_under_the_lowercase_key() {
+        let dir = sandbox("legacy-case-paths");
+        write(&dir, "Tt.7.impl", "1000100\n");
+        fs::create_dir_all(dir.join("beats")).unwrap();
+        fs::create_dir_all(dir.join("closing")).unwrap();
+        write(&dir.join("beats"), "Tt.7.impl", "1000200\n");
+        write(&dir.join("closing"), "Tt.7.impl", "1000300\n");
+
+        // On a case-insensitive file system the lowercase path finds it directly.
+        assert!(mark_path(&dir, "tt.7.impl").is_file());
+        assert!(beats_path(&dir, "tt.7.impl").is_file());
+        assert!(closing_path(&dir, "tt.7.impl").is_file());
+        assert!(
+            !mark_path(&dir, "tt.8.impl").exists(),
+            "a different issue is not matched"
+        );
+
+        cancel_in(&dir, key("tt", "7", "impl")).unwrap();
+        assert!(!dir.join("Tt.7.impl").exists());
+        assert!(!dir.join("beats/Tt.7.impl").exists());
+        assert!(!dir.join("closing/Tt.7.impl").exists());
+    }
+
+    #[test]
+    fn a_mark_read_back_names_its_project_in_lowercase() {
+        let dir = sandbox("read-mixed-case");
+        write(&dir, "Project1.7.impl", "1000100\n");
+
+        let marks = open_marks_in(&dir);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].project, "project1");
+        assert_eq!(marks[0].issue.as_deref(), Some("7"));
     }
 
     #[test]

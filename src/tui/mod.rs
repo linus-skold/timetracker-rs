@@ -924,6 +924,26 @@ mod tests {
         assert_eq!(descriptions(&app.data), vec!["after", "probe"]);
     }
 
+    #[test]
+    fn the_form_writes_project_and_tags_lowercase() {
+        let _guard = env_guard();
+        sandbox("form-lowercase");
+        seed(Vec::new(), 0);
+
+        let mut app = App::new().unwrap();
+        app.start_adding();
+        app.input_description.set_from("Mixed");
+        app.input_project.set_from("Project1");
+        app.input_tags.set_from("#Bug #bug #Web");
+        app.input_duration.set_from("15m");
+        app.submit_entry().unwrap();
+
+        let data = on_disk();
+        assert_eq!(data.entries[0].project.as_deref(), Some("project1"));
+        assert_eq!(data.entries[0].tags, ["bug", "web"]);
+        assert_eq!(data.entries[0].description, "Mixed");
+    }
+
     /// A whitespace-only Project means "no project", and must land as JSON `null`.
     #[test]
     fn the_form_writes_the_project_and_leaves_a_blank_one_null() {
