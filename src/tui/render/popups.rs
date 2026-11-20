@@ -306,15 +306,21 @@ pub(super) fn render_detail_popup(f: &mut Frame, app: &App) {
         Style::default().fg(theme::accent()).bold(),
         value_width,
     ));
-    // The worked stretches, split only at pauses of a minute or more.
-    for (i, (from, to)) in entry.work_segments().iter().enumerate() {
-        lines.push(Line::from(vec![
-            label(if i == 0 { "Timeline" } else { "" }),
-            Span::styled(
-                format!("{} -> {}", from.format("%H:%M"), to.format("%H:%M")),
-                Style::default().fg(theme::inactive()),
-            ),
-        ]));
+    // The worked stretches, split only at pauses of a minute or more. The
+    // header sits on its own line so the timeline reads as a list even when
+    // there is only one stretch.
+    let timeline = entry.work_segments();
+    if !timeline.is_empty() {
+        lines.push(Line::from(label("Timeline")));
+        for (from, to) in &timeline {
+            lines.push(Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    format!("{} -> {}", from.format("%H:%M"), to.format("%H:%M")),
+                    Style::default().fg(theme::inactive()),
+                ),
+            ]));
+        }
     }
     // Idle rows only when the entry has any.
     for (i, gap) in entry.idle.iter().enumerate() {

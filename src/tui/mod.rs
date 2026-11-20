@@ -3132,6 +3132,28 @@ mod tests {
             !screen.contains("10:30 ->"),
             "a seconds pause split the timeline:\n{screen}"
         );
+
+        // The header alone on its line, then one stretch per line beneath it.
+        let lines: Vec<&str> = screen.lines().collect();
+        let header = lines
+            .iter()
+            .position(|line| line.contains("Timeline"))
+            .expect("the header row");
+        assert!(
+            !lines[header].contains("->"),
+            "the first stretch shared the header row: {:?}",
+            lines[header]
+        );
+        assert!(
+            lines[header + 1].contains("09:00 -> 09:10"),
+            "the first stretch is not on its own line: {:?}",
+            lines[header + 1]
+        );
+        assert!(
+            lines[header + 2].contains("10:00 -> 11:02"),
+            "the second stretch is not on its own line: {:?}",
+            lines[header + 2]
+        );
     }
 
     #[test]
