@@ -100,6 +100,15 @@ pub fn ui(f: &mut Frame, app: &mut App) {
     let rows = LayoutRows::split(f.area(), plan);
 
     let (status_text, status_style) = match app.data.active_entry() {
+        Some(entry) if entry.is_paused() => (
+            format!(
+                "{}  {} - {} (paused) ",
+                crate::icons::paused(),
+                entry.description,
+                entry.format_duration()
+            ),
+            Style::default().fg(theme::inactive()).bold(),
+        ),
         Some(entry) => (
             format!(
                 "{}  {} - {} ",
@@ -209,6 +218,8 @@ pub fn ui(f: &mut Frame, app: &mut App) {
         Span::styled(": edit | ", Style::default().fg(theme::inactive())),
         Span::styled("d", Style::default().fg(theme::accent())),
         Span::styled(": del… | ", Style::default().fg(theme::inactive())),
+        Span::styled("space", Style::default().fg(theme::accent())),
+        Span::styled(": pause | ", Style::default().fg(theme::inactive())),
         Span::styled("s", Style::default().fg(theme::accent())),
         Span::styled(": stop", Style::default().fg(theme::inactive())),
     ];

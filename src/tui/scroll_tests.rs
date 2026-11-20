@@ -32,6 +32,8 @@ fn entry_at(id: u64, description: String, tag: Option<&str>, minutes: i64) -> Ti
         start_time: start,
         end_time: Some(start + Duration::minutes(5)),
         idle: Vec::new(),
+        paused_at: None,
+        pauses: Vec::new(),
         data: None,
     }
 }

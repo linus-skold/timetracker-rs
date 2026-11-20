@@ -2,7 +2,7 @@
 //! `run_tui` only reads events, this decides what they mean.
 
 use super::App;
-use super::{ConfirmAction, InputMode, OnboardingStep, Pane, ViewMode};
+use super::{ConfirmAction, Focus, InputMode, OnboardingStep, Pane, ViewMode};
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -96,6 +96,13 @@ fn normal(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::BackTab => app.cycle_focus_back(),
         KeyCode::Char('d') => app.request_confirm(ConfirmAction::Delete),
         KeyCode::Char('s') => app.stop_active()?,
+        // Only the Entries box owns `space`, and only for the row under the
+        // cursor — never a pane's, the Summary's, or some other running entry.
+        KeyCode::Char(' ') => {
+            if app.focus == Focus::Table {
+                app.toggle_pause()?;
+            }
+        }
         KeyCode::Char('r') => app.reload()?,
         KeyCode::Char('a') => app.start_adding(),
         KeyCode::Char('e') => app.start_editing(),
@@ -309,6 +316,8 @@ mod tests {
             start_time: Local::now() - chrono::Duration::hours(2),
             end_time: Some(Local::now() - chrono::Duration::hours(1)),
             idle: Vec::new(),
+            paused_at: None,
+            pauses: Vec::new(),
             data: None,
         }
     }
@@ -610,6 +619,8 @@ mod tests {
             start_time: start,
             end_time: Some(start + chrono::Duration::minutes(30)),
             idle: Vec::new(),
+            paused_at: None,
+            pauses: Vec::new(),
             data: None,
         }
     }
@@ -985,6 +996,122 @@ mod tests {
         assert_eq!(app.data.entries[0].description, "written elsewhere");
     }
 
+    /// `space` freezes the selected entry's clock, and again resumes it.
+    #[test]
+    fn space_pauses_and_resumes_the_selected_entry() {
+        let _guard = env_guard();
+        sandbox("keys-space-pause");
+        let mut open = entry(1, "running");
+        open.end_time = None;
+        seed(vec![open], 2);
+        let mut app = App::new().unwrap();
+
+        press(&mut app, KeyCode::Char(' '));
+        let stored = storage::load_data().unwrap();
+        assert!(
+            stored.entries[0].is_paused(),
+            "space did not pause the entry"
+        );
+        assert_eq!(app.status_message.as_deref(), Some("Paused"));
+
+        press(&mut app, KeyCode::Char(' '));
+        let stored = storage::load_data().unwrap();
+        assert!(!stored.entries[0].is_paused(), "space did not resume");
+        assert_eq!(
+            stored.entries[0].pauses.len(),
+            1,
+            "the paused stretch was not recorded"
+        );
+        assert_eq!(app.status_message.as_deref(), Some("Resumed"));
+    }
+
+    /// With nothing running there is nothing to freeze, so the key is inert.
+    #[test]
+    fn space_with_nothing_running_is_inert() {
+        let _guard = env_guard();
+        sandbox("keys-space-inert");
+        seed(vec![entry(0, "finished")], 1);
+        let mut app = App::new().unwrap();
+
+        press(&mut app, KeyCode::Char(' '));
+
+        assert_eq!(app.status_message, None);
+        let stored = storage::load_data().unwrap();
+        assert!(!stored.entries[0].is_paused());
+        assert!(stored.entries[0].pauses.is_empty());
+    }
+
+    /// The key acts on the row under the cursor, never on the running entry
+    /// just because it is the one running.
+    #[test]
+    fn space_pauses_only_the_entry_under_the_cursor() {
+        let _guard = env_guard();
+        sandbox("keys-space-selected");
+        let mut running = entry(1, "running");
+        running.start_time = Local::now();
+        running.end_time = None;
+        // Newest first, so the running entry opens as row 0.
+        seed(vec![entry(0, "finished"), running], 2);
+        let mut app = App::new().unwrap();
+
+        press(&mut app, KeyCode::Char('j'));
+        assert_eq!(
+            app.selected_entry().map(|e| e.description.as_str()),
+            Some("finished")
+        );
+        press(&mut app, KeyCode::Char(' '));
+        let stored = storage::load_data().unwrap();
+        let running = stored
+            .entries
+            .iter()
+            .find(|e| e.description == "running")
+            .unwrap();
+        assert!(
+            !running.is_paused(),
+            "a row other than the cursor's was paused"
+        );
+        assert_eq!(app.status_message, None);
+
+        press(&mut app, KeyCode::Char('k'));
+        press(&mut app, KeyCode::Char(' '));
+        let stored = storage::load_data().unwrap();
+        let running = stored
+            .entries
+            .iter()
+            .find(|e| e.description == "running")
+            .unwrap();
+        assert!(
+            running.is_paused(),
+            "the selected running row was not paused"
+        );
+    }
+
+    /// `space` belongs to the Entries box, so focus elsewhere leaves it inert.
+    #[test]
+    fn space_is_inert_when_focus_leaves_the_entries_box() {
+        let _guard = env_guard();
+        sandbox("keys-space-focus");
+        let mut open = entry(1, "running");
+        open.end_time = None;
+        open.project = Some("acme".to_string());
+        seed(vec![open], 2);
+        let mut app = App::new().unwrap();
+
+        press(&mut app, KeyCode::Char('P'));
+        assert_eq!(app.focus, Focus::Pane(Pane::Projects));
+        press(&mut app, KeyCode::Char(' '));
+        assert!(
+            !storage::load_data().unwrap().entries[0].is_paused(),
+            "a focused pane let `space` through"
+        );
+
+        // Tab lands on the table, where the key belongs.
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.focus, Focus::Table);
+        press(&mut app, KeyCode::Char(' '));
+        assert!(storage::load_data().unwrap().entries[0].is_paused());
+    }
+
     /// A Day heat with more projects than rows scrolls them; the table
     /// selection stays where it was.
     #[test]
@@ -1009,6 +1136,8 @@ mod tests {
                         start_time: start,
                         end_time: Some(start + chrono::Duration::minutes(30)),
                         idle: Vec::new(),
+                        paused_at: None,
+                        pauses: Vec::new(),
                         data: None,
                     }
                 })
@@ -1100,6 +1229,8 @@ mod tests {
                         start_time: start,
                         end_time: Some(start + chrono::Duration::minutes(30)),
                         idle: Vec::new(),
+                        paused_at: None,
+                        pauses: Vec::new(),
                         data: None,
                     }
                 })

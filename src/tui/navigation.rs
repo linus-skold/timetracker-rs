@@ -312,6 +312,34 @@ impl App {
         Ok(())
     }
 
+    /// Pause or resume the entry under the cursor. `None` when the cursor is on
+    /// a group header or an entry that is not running, so the key is inert
+    /// rather than acting on an entry the user did not select.
+    pub(crate) fn toggle_pause(&mut self) -> Result<Option<bool>> {
+        let Some(id) = self
+            .selected_entry()
+            .filter(|entry| entry.is_active())
+            .map(|entry| entry.id)
+        else {
+            return Ok(None);
+        };
+        let paused = self.mutate_store(|data| {
+            let entry = data.entries.iter_mut().find(|entry| entry.id == id)?;
+            if !entry.is_active() {
+                return None;
+            }
+            if entry.is_paused() {
+                entry.resume().then_some(false)
+            } else {
+                entry.pause().then_some(true)
+            }
+        })?;
+        if let Some(paused) = paused {
+            self.status_message = Some(if paused { "Paused" } else { "Resumed" }.to_string());
+        }
+        Ok(paused)
+    }
+
     pub(crate) fn next_period(&mut self) {
         match self.view_mode {
             ViewMode::All => {}

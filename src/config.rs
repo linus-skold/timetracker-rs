@@ -57,6 +57,7 @@ pub struct ThemeConfig {
 #[derive(Debug, Default, Clone, Deserialize)]
 pub struct IconsConfig {
     pub active: Option<String>,
+    pub paused: Option<String>,
     pub stopped: Option<String>,
     pub logged: Option<String>,
     pub warning: Option<String>,
@@ -340,6 +341,7 @@ fn merge_theme(b: ThemeConfig, o: ThemeConfig) -> ThemeConfig {
 fn merge_icons(b: IconsConfig, o: IconsConfig) -> IconsConfig {
     IconsConfig {
         active: o.active.or(b.active),
+        paused: o.paused.or(b.paused),
         stopped: o.stopped.or(b.stopped),
         logged: o.logged.or(b.logged),
         warning: o.warning.or(b.warning),
