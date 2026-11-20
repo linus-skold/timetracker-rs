@@ -6,6 +6,7 @@ use crate::config;
 
 struct Icons {
     active: String,
+    paused: String,
     stopped: String,
     logged: String,
     warning: String,
@@ -21,6 +22,7 @@ impl Icons {
 
         Icons {
             active: icon(&cfg.active, "▶️"),
+            paused: icon(&cfg.paused, "⏸️"),
             stopped: icon(&cfg.stopped, "⏹️"),
             logged: icon(&cfg.logged, "📝"),
             warning: icon(&cfg.warning, "⚠️"),
@@ -39,6 +41,9 @@ fn icons() -> &'static Icons {
 
 pub fn active() -> &'static str {
     &icons().active
+}
+pub fn paused() -> &'static str {
+    &icons().paused
 }
 pub fn stopped() -> &'static str {
     &icons().stopped

@@ -23,6 +23,13 @@ pub struct TimeEntry {
     /// Silent stretches inside this entry's span, as `tt log --idle` recorded them.
     #[serde(default)]
     pub idle: Vec<IdleInterval>,
+    /// When the active entry was paused, if it is paused right now. The clock
+    /// stops here until it is resumed or stopped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_at: Option<DateTime<Local>>,
+    /// Completed paused stretches, subtracted from [`TimeEntry::duration`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pauses: Vec<IdleInterval>,
     /// Free-form JSON hung on the entry by `--data` or the form's Data field.
     /// Always an object; see [`crate::entry_data`], which is the only thing that
     /// builds one. Skipped when unset, so entries without it are unchanged on disk.
@@ -116,8 +123,48 @@ pub fn format_tags(tags: &[String]) -> String {
 
 impl TimeEntry {
     pub fn duration(&self) -> Duration {
-        let end = self.end_time.unwrap_or_else(Local::now);
-        end.signed_duration_since(self.start_time)
+        // A paused entry's clock stops at the pause, so its span cannot grow.
+        let end = match (self.end_time, self.paused_at) {
+            (Some(end), _) => end,
+            (None, Some(paused_at)) => paused_at,
+            (None, None) => Local::now(),
+        };
+        let paused = self
+            .pauses
+            .iter()
+            .fold(Duration::zero(), |acc, pause| acc + pause.duration());
+        (end.signed_duration_since(self.start_time) - paused).max(Duration::zero())
+    }
+
+    /// Whether the active entry is paused right now.
+    pub fn is_paused(&self) -> bool {
+        self.is_active() && self.paused_at.is_some()
+    }
+
+    /// Stop the clock without ending the entry. False when there is nothing to
+    /// pause, or it is already paused.
+    pub fn pause(&mut self) -> bool {
+        if !self.is_active() || self.paused_at.is_some() {
+            return false;
+        }
+        self.paused_at = Some(Local::now());
+        true
+    }
+
+    /// Start the clock again, recording the stretch it was stopped for. False
+    /// when the entry is not paused.
+    pub fn resume(&mut self) -> bool {
+        if !self.is_active() {
+            return false;
+        }
+        let Some(paused_at) = self.paused_at.take() else {
+            return false;
+        };
+        let resumed_at = Local::now();
+        if resumed_at > paused_at {
+            self.pauses.push(IdleInterval::new(paused_at, resumed_at));
+        }
+        true
     }
 
     pub fn format_duration(&self) -> String {
@@ -144,9 +191,11 @@ impl TimeEntry {
         self.end_time.is_none()
     }
 
-    /// Returns the status icon for this entry (active or empty)
+    /// Returns the status icon for this entry (paused, active or empty)
     pub fn status_icon(&self) -> &'static str {
-        if self.is_active() {
+        if self.is_paused() {
+            icons::paused()
+        } else if self.is_active() {
             icons::active()
         } else {
             ""
@@ -201,6 +250,36 @@ impl TimeEntry {
         self.search_haystack().contains(needle_lower)
     }
 
+    /// The entry's worked stretches for the detail popover's timeline, earliest
+    /// first: the span minus every pause of at least a minute. A shorter pause
+    /// is treated as continuous work rather than splitting the row. While the
+    /// entry is paused, the timeline ends where the pause began.
+    ///
+    /// Pauses are clamped to the entry's span and dropped if that empties them,
+    /// then sorted and merged with any overlap, exactly as [`trim_spans`] treats
+    /// idle. One interval per stretch, so a pause at an endpoint just trims it.
+    ///
+    /// [`trim_spans`]: TimeEntry::trim_spans
+    pub fn work_segments(&self) -> Vec<(DateTime<Local>, DateTime<Local>)> {
+        let span_end = match (self.end_time, self.paused_at) {
+            (Some(end), _) => end,
+            (None, Some(paused_at)) => paused_at,
+            (None, None) => Local::now(),
+        };
+        if span_end <= self.start_time {
+            return Vec::new();
+        }
+        let holes = merged_holes(
+            self.start_time,
+            span_end,
+            self.pauses
+                .iter()
+                .filter(|pause| pause.duration() >= Duration::minutes(1))
+                .copied(),
+        );
+        complement(self.start_time, span_end, &holes)
+    }
+
     /// The spans this entry would be left as if its idle stretches were trimmed
     /// away, earliest first. Pure, so the trim prompt can state the outcome before
     /// [`TimeData::split_at_idle`](TimeData::split_at_idle) writes exactly these
@@ -214,45 +293,61 @@ impl TimeEntry {
     /// Empty means no trim: no `end_time`, nothing left after clamping, or idle
     /// covering the whole span, which leaves the entry as it is.
     pub fn trim_spans(&self) -> Vec<(DateTime<Local>, DateTime<Local>)> {
-        let span_start = self.start_time;
         let Some(span_end) = self.end_time else {
             return Vec::new();
         };
-
-        let mut gaps: Vec<IdleInterval> = self
-            .idle
-            .iter()
-            .map(|gap| IdleInterval {
-                start: gap.start.clamp(span_start, span_end),
-                end: gap.end.clamp(span_start, span_end),
-            })
-            .filter(|gap| gap.end > gap.start)
-            .collect();
-        gaps.sort_by_key(|gap| gap.start);
-        let mut holes: Vec<IdleInterval> = Vec::new();
-        for gap in gaps {
-            match holes.last_mut() {
-                Some(last) if gap.start <= last.end => last.end = last.end.max(gap.end),
-                _ => holes.push(gap),
-            }
-        }
+        let holes = merged_holes(self.start_time, span_end, self.idle.iter().copied());
         if holes.is_empty() {
             return Vec::new();
         }
-
-        let mut spans: Vec<(DateTime<Local>, DateTime<Local>)> = Vec::new();
-        let mut cursor = span_start;
-        for hole in &holes {
-            if hole.start > cursor {
-                spans.push((cursor, hole.start));
-            }
-            cursor = hole.end;
-        }
-        if span_end > cursor {
-            spans.push((cursor, span_end));
-        }
-        spans
+        complement(self.start_time, span_end, &holes)
     }
+}
+
+/// `holes` clamped to `start..end`, with empties dropped, sorted, and merged
+/// where they overlap or touch.
+fn merged_holes(
+    start: DateTime<Local>,
+    end: DateTime<Local>,
+    holes: impl Iterator<Item = IdleInterval>,
+) -> Vec<IdleInterval> {
+    let mut gaps: Vec<IdleInterval> = holes
+        .map(|gap| IdleInterval {
+            start: gap.start.clamp(start, end),
+            end: gap.end.clamp(start, end),
+        })
+        .filter(|gap| gap.end > gap.start)
+        .collect();
+    gaps.sort_by_key(|gap| gap.start);
+    let mut merged: Vec<IdleInterval> = Vec::new();
+    for gap in gaps {
+        match merged.last_mut() {
+            Some(last) if gap.start <= last.end => last.end = last.end.max(gap.end),
+            _ => merged.push(gap),
+        }
+    }
+    merged
+}
+
+/// The complement of `holes` inside `start..end`, earliest first. A hole at an
+/// endpoint contributes nothing.
+fn complement(
+    start: DateTime<Local>,
+    end: DateTime<Local>,
+    holes: &[IdleInterval],
+) -> Vec<(DateTime<Local>, DateTime<Local>)> {
+    let mut spans = Vec::new();
+    let mut cursor = start;
+    for hole in holes {
+        if hole.start > cursor {
+            spans.push((cursor, hole.start));
+        }
+        cursor = hole.end;
+    }
+    if end > cursor {
+        spans.push((cursor, end));
+    }
+    spans
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -274,9 +369,11 @@ impl TimeData {
     }
 
     /// Stop the currently active entry. Returns true if an entry was stopped.
+    /// A paused entry ends where it was paused, so the gap is not billed.
     pub fn stop_active(&mut self) -> bool {
         if let Some(entry) = self.active_entry_mut() {
-            entry.end_time = Some(Local::now());
+            entry.end_time = Some(entry.paused_at.unwrap_or_else(Local::now));
+            entry.paused_at = None;
             true
         } else {
             false
@@ -314,6 +411,8 @@ impl TimeData {
             start_time,
             end_time,
             idle: Vec::new(),
+            paused_at: None,
+            pauses: Vec::new(),
             data: None,
         };
         self.next_id += 1;
@@ -387,6 +486,10 @@ impl TimeData {
             entry.tags = normalize_tags(tags);
             entry.start_time = start_time;
             entry.end_time = end_time;
+            // A finished entry cannot be paused; drop a pause it was carrying.
+            if end_time.is_some() {
+                entry.paused_at = None;
+            }
             true
         } else {
             false
@@ -484,6 +587,8 @@ impl TimeData {
                     start_time: piece_start,
                     end_time: Some(piece_end),
                     idle: inside,
+                    paused_at: None,
+                    pauses: Vec::new(),
                     data: template.data.clone(),
                 });
                 ids.push(new_id);
@@ -511,6 +616,8 @@ mod tests {
             start_time: Local::now(),
             end_time: None,
             idle: Vec::new(),
+            paused_at: None,
+            pauses: Vec::new(),
             data: None,
         }
     }
@@ -619,6 +726,8 @@ mod tests {
                         )
                     })
                     .collect(),
+                paused_at: None,
+                pauses: Vec::new(),
                 data: None,
             }],
             next_id: 8,
@@ -640,6 +749,191 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn a_completed_pause_is_subtracted_from_the_duration() {
+        let mut entry = logged_with_idle(120, &[]).entries.remove(0);
+        entry.pauses = vec![IdleInterval::new(
+            base() + Duration::minutes(30),
+            base() + Duration::minutes(60),
+        )];
+
+        assert_eq!(entry.duration(), Duration::minutes(90));
+        assert!(!entry.is_paused());
+    }
+
+    #[test]
+    fn an_ongoing_pause_freezes_the_clock_where_it_stopped() {
+        let mut entry = logged_with_idle(120, &[]).entries.remove(0);
+        entry.end_time = None;
+        entry.paused_at = Some(base() + Duration::minutes(25));
+
+        assert!(entry.is_paused());
+        assert_eq!(
+            entry.duration(),
+            Duration::minutes(25),
+            "a paused entry measures to its pause, not to now"
+        );
+        assert_eq!(entry.format_duration(), "0h 25m");
+    }
+
+    #[test]
+    fn resuming_records_the_stretch_and_the_clock_runs_again() {
+        let mut entry = logged_with_idle(120, &[]).entries.remove(0);
+        entry.end_time = None;
+        entry.paused_at = Some(base() + Duration::minutes(14));
+
+        assert!(entry.resume());
+        assert!(!entry.is_paused());
+        assert_eq!(entry.pauses.len(), 1, "the pause was recorded");
+        assert!(!entry.resume(), "resuming twice does nothing");
+        assert_eq!(entry.pauses.len(), 1);
+    }
+
+    #[test]
+    fn pausing_a_finished_entry_is_refused() {
+        let mut entry = logged_with_idle(120, &[]).entries.remove(0);
+        assert!(!entry.pause());
+        assert!(!entry.is_paused());
+        assert_eq!(entry.paused_at, None);
+    }
+
+    #[test]
+    fn stopping_a_paused_entry_ends_it_where_it_paused() {
+        let mut data = logged_with_idle(120, &[]);
+        data.entries[0].end_time = None;
+        let paused_at = base() + Duration::minutes(20);
+        data.entries[0].paused_at = Some(paused_at);
+
+        assert!(data.stop_active());
+
+        let entry = &data.entries[0];
+        assert_eq!(entry.end_time, Some(paused_at));
+        assert_eq!(entry.paused_at, None);
+        assert_eq!(entry.duration(), Duration::minutes(20));
+    }
+
+    #[test]
+    fn an_entry_with_no_pauses_does_not_serialise_the_pause_fields() {
+        let data = logged_with_idle(60, &[]);
+        let json = serde_json::to_string(&data).unwrap();
+        assert!(!json.contains("paused_at"), "{json}");
+        assert!(!json.contains("pauses"), "{json}");
+    }
+
+    #[test]
+    fn pause_state_round_trips_through_the_store() {
+        let mut data = logged_with_idle(120, &[(10, 20)]);
+        data.entries[0].end_time = None;
+        data.entries[0].paused_at = Some(base() + Duration::minutes(30));
+        data.entries[0].pauses = vec![IdleInterval::new(
+            base() + Duration::minutes(5),
+            base() + Duration::minutes(10),
+        )];
+
+        let round_tripped: TimeData =
+            serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap();
+
+        assert_eq!(
+            round_tripped.entries[0].paused_at,
+            data.entries[0].paused_at
+        );
+        assert_eq!(round_tripped.entries[0].pauses, data.entries[0].pauses);
+    }
+
+    /// `work_segments` as minute offsets from `base`.
+    fn segment_offsets(entry: &TimeEntry) -> Vec<(i64, i64)> {
+        entry
+            .work_segments()
+            .into_iter()
+            .map(|(from, to)| {
+                (
+                    from.signed_duration_since(base()).num_minutes(),
+                    to.signed_duration_since(base()).num_minutes(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_timeline_splits_at_a_pause_of_at_least_a_minute() {
+        let mut entry = logged_with_idle(120, &[]).entries.remove(0);
+        entry.pauses = vec![IdleInterval::new(
+            base() + Duration::minutes(30),
+            base() + Duration::minutes(60),
+        )];
+
+        assert_eq!(segment_offsets(&entry), vec![(0, 30), (60, 120)]);
+    }
+
+    #[test]
+    fn a_pause_measured_in_seconds_does_not_split_the_timeline() {
+        let mut entry = logged_with_idle(120, &[]).entries.remove(0);
+        entry.pauses = vec![IdleInterval::new(
+            base() + Duration::minutes(30),
+            base() + Duration::minutes(30) + Duration::seconds(20),
+        )];
+
+        assert_eq!(
+            segment_offsets(&entry),
+            vec![(0, 120)],
+            "a sub-minute pause is continuous work"
+        );
+    }
+
+    #[test]
+    fn the_timeline_ignores_a_short_pause_beside_a_long_one() {
+        let mut entry = logged_with_idle(120, &[]).entries.remove(0);
+        entry.pauses = vec![
+            IdleInterval::new(
+                base() + Duration::minutes(30),
+                base() + Duration::minutes(60),
+            ),
+            IdleInterval::new(
+                base() + Duration::minutes(90),
+                base() + Duration::minutes(90) + Duration::seconds(5),
+            ),
+        ];
+
+        assert_eq!(segment_offsets(&entry), vec![(0, 30), (60, 120)]);
+    }
+
+    #[test]
+    fn the_timeline_sorts_and_merges_overlapping_pauses() {
+        let mut entry = logged_with_idle(120, &[]).entries.remove(0);
+        entry.pauses = vec![
+            IdleInterval::new(
+                base() + Duration::minutes(50),
+                base() + Duration::minutes(70),
+            ),
+            IdleInterval::new(
+                base() + Duration::minutes(30),
+                base() + Duration::minutes(60),
+            ),
+        ];
+
+        assert_eq!(segment_offsets(&entry), vec![(0, 30), (70, 120)]);
+    }
+
+    #[test]
+    fn a_pause_at_the_end_of_the_span_only_trims_the_timeline() {
+        let mut entry = logged_with_idle(120, &[]).entries.remove(0);
+        entry.pauses = vec![IdleInterval::new(
+            base() + Duration::minutes(90),
+            base() + Duration::minutes(120),
+        )];
+
+        assert_eq!(segment_offsets(&entry), vec![(0, 90)]);
+    }
+
+    #[test]
+    fn a_paused_running_entry_timeline_ends_where_it_paused() {
+        let mut entry = logged_with_idle(120, &[]).entries.remove(0);
+        entry.end_time = None;
+        entry.paused_at = Some(base() + Duration::minutes(45));
+
+        assert_eq!(segment_offsets(&entry), vec![(0, 45)]);
     }
 
     #[test]

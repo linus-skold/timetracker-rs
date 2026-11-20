@@ -490,6 +490,8 @@ mod tests {
             start_time: Local::now(),
             end_time: None,
             idle: Vec::new(),
+            paused_at: None,
+            pauses: Vec::new(),
             data: None,
         }
     }
@@ -1049,6 +1051,8 @@ mod tests {
             start_time: start,
             end_time: Some(start + chrono::Duration::minutes(minutes)),
             idle: Vec::new(),
+            paused_at: None,
+            pauses: Vec::new(),
             data: None,
         }
     }
@@ -3088,6 +3092,48 @@ mod tests {
         assert!(!screen.contains("Data"), "an empty Data header:\n{screen}");
     }
 
+    /// The detail popover lists the worked stretches, split only at pauses of a
+    /// minute or more, so a pause of seconds leaves one continuous row.
+    #[test]
+    fn the_detail_popover_draws_the_work_timeline() {
+        let _guard = env_guard();
+        sandbox("detail-timeline");
+        let today = Local::now().date_naive();
+        let mut worked = logged(0, "with pauses", "tt", &[], today, 122);
+        let start = worked.start_time;
+        worked.pauses = vec![
+            crate::tracker::IdleInterval::new(
+                start + chrono::Duration::minutes(10),
+                start + chrono::Duration::minutes(60),
+            ),
+            // Seconds only: must not split the second segment.
+            crate::tracker::IdleInterval::new(
+                start + chrono::Duration::minutes(90),
+                start + chrono::Duration::minutes(90) + chrono::Duration::seconds(30),
+            ),
+        ];
+        seed(vec![worked], 1);
+
+        let mut app = App::new().unwrap();
+        app.table_state.select(Some(0));
+        app.open_detail();
+        let screen = frame_lines(&mut app, 100, 40).join("\n");
+
+        assert!(screen.contains("Timeline"), "no Timeline label:\n{screen}");
+        assert!(
+            screen.contains("09:00 -> 09:10"),
+            "the first worked stretch is missing:\n{screen}"
+        );
+        assert!(
+            screen.contains("10:00 -> 11:02"),
+            "the second worked stretch is missing:\n{screen}"
+        );
+        assert!(
+            !screen.contains("10:30 ->"),
+            "a seconds pause split the timeline:\n{screen}"
+        );
+    }
+
     #[test]
     fn a_running_member_keeps_the_group_and_day_totals_moving() {
         let _guard = env_guard();
@@ -3383,6 +3429,7 @@ mod tests {
 
         let footer = frame_lines(&mut app, 200, 30).join("\n");
         assert!(!footer.contains("g: toggle"), "footer legend:\n{footer}");
+        assert!(footer.contains("space: pause"), "footer legend:\n{footer}");
         assert!(footer.contains("s: stop"), "footer legend:\n{footer}");
 
         app.input_mode = InputMode::Help;
@@ -5795,6 +5842,8 @@ mod tests {
                     start_time: start,
                     end_time: Some(start + chrono::Duration::hours(2)),
                     idle: Vec::new(),
+                    paused_at: None,
+                    pauses: Vec::new(),
                     data: None,
                 },
                 dated(7, "unrelated", "vinge", &["ops"], today),

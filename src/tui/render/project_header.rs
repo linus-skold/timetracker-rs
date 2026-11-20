@@ -34,12 +34,26 @@ pub(super) fn project_header_row(
             _ => Cell::from(""),
         })
         .collect();
+    let paused = header.end.is_none()
+        && header
+            .members
+            .iter()
+            .any(|index| entries.get(*index).is_some_and(|e| e.is_paused()));
     let icon = if header.end.is_none() {
-        crate::icons::active()
+        if paused {
+            crate::icons::paused()
+        } else {
+            crate::icons::active()
+        }
     } else {
         ""
     };
-    cells.push(Cell::from(icon).style(Style::default().fg(theme::active())));
+    let icon_style = if paused {
+        Style::default().fg(theme::inactive())
+    } else {
+        Style::default().fg(theme::active())
+    };
+    cells.push(Cell::from(icon).style(icon_style));
 
     Row::new(cells).style(Style::default().bg(theme::group_header_bg()))
 }

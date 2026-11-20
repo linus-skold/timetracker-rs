@@ -405,11 +405,12 @@ pub fn status() -> Result<()> {
     let data = load_data()?;
 
     if let Some(active) = data.active_entry() {
-        println!(
-            "{}  Currently tracking: \"{}\"",
-            icons::active(),
-            active.description
-        );
+        let icon = if active.is_paused() {
+            icons::paused()
+        } else {
+            icons::active()
+        };
+        println!("{}  Currently tracking: \"{}\"", icon, active.description);
         if let Some(project) = &active.project {
             println!("   Project: {}", project);
         }
