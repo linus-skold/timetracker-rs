@@ -97,6 +97,21 @@ pub enum Commands {
         #[arg(short = 'n', long)]
         limit: Option<usize>,
     },
+    /// Write all entries as JSON, to move them to another machine
+    Export {
+        /// Write to this file instead of stdout
+        #[arg(short = 'o', long, value_name = "PATH")]
+        output: Option<std::path::PathBuf>,
+    },
+    /// Add entries from an export file; entries already here are skipped
+    Import {
+        /// The export file, or - for stdin
+        #[arg(value_name = "PATH")]
+        path: String,
+        /// Replace every local entry with the file's entries, after a backup
+        #[arg(long)]
+        replace: bool,
+    },
     /// Open interactive TUI
     Tui,
     /// Show current status
@@ -193,6 +208,8 @@ impl Commands {
                 | Commands::Agent { .. }
                 | Commands::Skill { .. }
                 | Commands::Completions { .. }
+                | Commands::Export { .. }
+                | Commands::Import { .. }
         )
     }
 }

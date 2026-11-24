@@ -21,6 +21,7 @@ mod storage;
 mod text_table;
 mod time;
 mod tracker;
+mod transfer;
 mod tui;
 mod update;
 
@@ -131,6 +132,8 @@ fn main() -> Result<()> {
             }),
             cli::SkillCommands::Targets => skill::list_targets(),
         },
+        Commands::Export { output } => transfer::export(output.as_deref()),
+        Commands::Import { path, replace } => transfer::import(&path, replace),
         Commands::Completions { shell } => commands::completions(shell.as_deref()),
     }
 }
@@ -155,6 +158,8 @@ fn needs_store_preamble(command: &Commands) -> bool {
         | Commands::Show { .. }
         | Commands::Edit { .. }
         | Commands::List { .. }
+        | Commands::Export { .. }
+        | Commands::Import { .. }
         | Commands::Tui
         | Commands::Status
         | Commands::Active => true,

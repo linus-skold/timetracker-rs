@@ -90,6 +90,9 @@ pub fn infer_project(tags: &[String]) -> Option<String> {
         .cloned()
 }
 
+/// The store schema this build reads and writes.
+pub const SCHEMA_VERSION: u32 = 2;
+
 /// Migrations, each run once: v1 infers any missing `project`, v2 gives every
 /// entry a `uuid`.
 pub fn migrate(data: &mut TimeData) {
@@ -103,7 +106,7 @@ pub fn migrate(data: &mut TimeData) {
     }
     // Every call: an older binary can save a v2 store without uuids.
     data.fill_missing_uuids();
-    data.schema_version = data.schema_version.max(2);
+    data.schema_version = data.schema_version.max(SCHEMA_VERSION);
 }
 
 /// Format tags for display (with # prefix), e.g. "#backend #bug"

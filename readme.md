@@ -39,6 +39,8 @@ tt stop
 tt today
 tt show 1
 tt edit 1 --json '{"description": "New title"}'
+tt export --output entries.json   # move entries to another machine
+tt import entries.json            # merge by uuid; safe to run twice
 ```
 
 See [docs/usage.md](docs/usage.md) for the full command reference, duration
