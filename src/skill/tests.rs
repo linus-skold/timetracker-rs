@@ -126,3 +126,9 @@ fn no_agent_at_all_falls_back_to_claude_code() {
     assert_eq!(chosen.len(), 1);
     assert_eq!(chosen[0].name, "claude");
 }
+
+/// `tt --skill` must print the real contract, not a stub.
+#[test]
+fn skill_markdown_is_the_embedded_skill_file() {
+    assert!(skill_markdown().starts_with("---\nname: tt-time-logging"));
+}

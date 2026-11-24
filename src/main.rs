@@ -130,6 +130,7 @@ fn main() -> Result<()> {
                 hooks: !no_hooks,
             }),
             cli::SkillCommands::Targets => skill::list_targets(),
+            cli::SkillCommands::Show => skill::print_skill_markdown(),
         },
         Commands::Completions { shell } => commands::completions(shell.as_deref()),
     }
