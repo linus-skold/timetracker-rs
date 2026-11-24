@@ -192,3 +192,56 @@ fn replace_swaps_the_entries_and_writes_a_backup_of_the_old_store() {
     assert_eq!(data.entries.len(), 1);
     assert_eq!(data.entries[0].description, "new");
 }
+
+#[test]
+fn two_replaces_in_a_row_keep_both_backups() {
+    let _guard = env_guard();
+    env_sandbox("transfer-backups");
+    with_data(|data| {
+        seed(data, "old", false);
+        Ok(())
+    })
+    .unwrap();
+
+    let first = import_text(&exported_text(&["a"]), true).unwrap().backup;
+    let second = import_text(&exported_text(&["b"]), true).unwrap().backup;
+
+    let (first, second) = (first.unwrap(), second.unwrap());
+    assert_ne!(first, second);
+    assert!(first.exists() && second.exists());
+    assert!(std::fs::read_to_string(first).unwrap().contains("old"));
+}
+
+#[test]
+fn a_utf8_bom_is_stripped_before_parsing() {
+    let mut bytes = vec![0xEF, 0xBB, 0xBF];
+    bytes.extend(exported_text(&["x"]).into_bytes());
+
+    let text = decode_source(bytes).unwrap();
+
+    assert_eq!(parse_export(&text).unwrap().len(), 1);
+}
+
+#[test]
+fn a_utf16_file_gets_a_clear_error() {
+    for bom in [[0xFF, 0xFE], [0xFE, 0xFF]] {
+        let error = decode_source(bom.to_vec()).unwrap_err().to_string();
+        assert!(error.contains("--output"), "{error}");
+    }
+}
+
+#[test]
+fn export_refuses_to_overwrite_the_live_store() {
+    let _guard = env_guard();
+    env_sandbox("transfer-live-store");
+    with_data(|data| {
+        seed(data, "keep", false);
+        Ok(())
+    })
+    .unwrap();
+    let store = storage::get_data_path().unwrap();
+
+    assert!(export(Some(&store)).is_err());
+    assert_eq!(load_data().unwrap().entries.len(), 1);
+    assert!(refuse_live_store(&store.with_file_name("elsewhere.json")).is_ok());
+}

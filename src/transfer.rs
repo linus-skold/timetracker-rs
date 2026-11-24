@@ -15,6 +15,8 @@ use crate::{naming, storage};
 
 const FORMAT_MARKER: &str = "tt-export";
 const FORMAT_VERSION: u64 = 1;
+/// Older stores have no uuids, so a merge cannot match their entries.
+const FIRST_SCHEMA_WITH_UUIDS: u32 = 2;
 /// Path argument that means standard input.
 const STDIN_PATH: &str = "-";
 
@@ -46,6 +48,9 @@ pub struct ImportSummary {
 
 /// `tt export`: JSON to stdout, or to `output`.
 pub fn export(output: Option<&Path>) -> Result<()> {
+    if let Some(path) = output {
+        refuse_live_store(path)?;
+    }
     let data = storage::load_data()?;
     let json = render_export(&data, Local::now())?;
     match output {
@@ -73,6 +78,19 @@ pub fn import(source: &str, replace: bool) -> Result<()> {
     Ok(())
 }
 
+/// An export over `data.json` would destroy the store.
+fn refuse_live_store(output: &Path) -> Result<()> {
+    let store = storage::get_data_path()?;
+    let same = match (output.canonicalize(), store.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => output == store,
+    };
+    if same {
+        bail!("Refusing to overwrite the live store {}", store.display());
+    }
+    Ok(())
+}
+
 fn render_export(data: &TimeData, exported_at: DateTime<Local>) -> Result<String> {
     let file = ExportFile {
         format: FORMAT_MARKER.to_string(),
@@ -85,14 +103,29 @@ fn render_export(data: &TimeData, exported_at: DateTime<Local>) -> Result<String
 }
 
 fn read_source(source: &str) -> Result<String> {
-    let mut text = String::new();
-    if source == STDIN_PATH {
-        std::io::stdin().read_to_string(&mut text)?;
+    let bytes = if source == STDIN_PATH {
+        let mut bytes = Vec::new();
+        std::io::stdin().read_to_end(&mut bytes)?;
+        bytes
     } else {
-        text =
-            std::fs::read_to_string(source).with_context(|| format!("Could not read {source}"))?;
+        std::fs::read(source).with_context(|| format!("Could not read {source}"))?
+    };
+    decode_source(bytes)
+}
+
+/// UTF-8 text without a BOM. Windows PowerShell 5.1 `>` writes UTF-16.
+fn decode_source(bytes: Vec<u8>) -> Result<String> {
+    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
+        bail!(
+            "The file is UTF-16, not UTF-8 (PowerShell `>` does this). \
+             Export with `tt export --output <file>` instead."
+        );
     }
-    Ok(text)
+    let text = String::from_utf8(bytes).context("The file is not valid UTF-8")?;
+    Ok(text
+        .strip_prefix('\u{FEFF}')
+        .map(str::to_string)
+        .unwrap_or(text))
 }
 
 /// The entries of a valid export file, normalised like a loaded store.
@@ -112,12 +145,15 @@ fn parse_export(text: &str) -> Result<Vec<TimeEntry>> {
     }
     match header.schema_version {
         Some(version) if version > SCHEMA_VERSION => bail!(
-            "The file uses store schema {version}, but this tt reads up to {SCHEMA_VERSION}. \
+            "The file uses store schema {version}, but this tt reads schemas {FIRST_SCHEMA_WITH_UUIDS} to {SCHEMA_VERSION}. \
              Update tt."
         ),
-        // A pre-uuid store cannot be matched, so it cannot be merged safely.
-        Some(version) if version >= SCHEMA_VERSION => {}
-        _ => bail!("The file uses an old store schema. Run `tt export` with a current tt."),
+        // Only one schema is in range. A schema bump must migrate incoming entries.
+        Some(version) if version >= FIRST_SCHEMA_WITH_UUIDS => {}
+        _ => bail!(
+            "The file uses a store schema older than {FIRST_SCHEMA_WITH_UUIDS}, which has no \
+             uuids to match on. Export again with a current tt."
+        ),
     }
     let file: ExportFile = serde_json::from_str(text).context("Invalid export file")?;
     let mut data = TimeData {
@@ -216,10 +252,32 @@ fn backup_store() -> Result<Option<PathBuf>> {
         return Ok(None);
     }
     let stamp = Local::now().format("%Y%m%d-%H%M%S");
-    let backup = path.with_extension(format!("json.bak-{stamp}"));
-    std::fs::copy(&path, &backup)
-        .with_context(|| format!("Could not write backup {}", backup.display()))?;
-    Ok(Some(backup))
+    for attempt in 0u32.. {
+        let suffix = if attempt == 0 {
+            String::new()
+        } else {
+            format!("-{attempt}")
+        };
+        let backup = path.with_extension(format!("json.bak-{stamp}{suffix}"));
+        // create_new: never overwrite an earlier backup.
+        let mut target = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&backup)
+        {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => {
+                return Err(e)
+                    .with_context(|| format!("Could not write backup {}", backup.display()));
+            }
+        };
+        let mut source = std::fs::File::open(&path)?;
+        std::io::copy(&mut source, &mut target)
+            .with_context(|| format!("Could not write backup {}", backup.display()))?;
+        return Ok(Some(backup));
+    }
+    unreachable!("the attempt counter does not end")
 }
 
 fn describe(summary: &ImportSummary, replace: bool) -> String {

@@ -99,6 +99,9 @@ tt edit --json '{"id": 12, "end_time": null}'
 
 Write all entries as JSON to move them to another machine. By default the JSON goes
 to stdout, and nothing else goes there. With `--output` the JSON goes to the file.
+Use `--output` as the main form. In Windows PowerShell 5.1, `>` writes UTF-16, and
+`tt import` rejects that file. `tt export` refuses an `--output` path that is the live
+`data.json`.
 
 The file is an object with the keys `format` (`tt-export`), `version`, `exported_at`,
 `schema_version` and `entries`. Each entry has the same shape as in `data.json`.
@@ -106,7 +109,7 @@ Only entries are exported. Agent marks, dismissed spans and the config stay loca
 
 ```sh
 tt export --output entries.json
-tt export > entries.json
+tt export > entries.json   # not in Windows PowerShell 5.1
 ```
 
 ---
@@ -128,8 +131,9 @@ path of the copy.
 The command checks the whole file before it changes the store. It rejects a file with
 a wrong `format`, an unknown or newer `version`, a newer `schema_version`, an entry
 without a `uuid`, or a `uuid` that occurs twice. It also rejects an import that would
-leave two running entries. In that case, stop the local entry and import again. Nothing
-is written when the command fails.
+leave two running entries. In that case, stop the local entry and import again. If the
+command fails, it does not change `data.json`. With `--replace`, a backup file can stay
+after a failure. `tt import` reads UTF-8 and ignores a leading BOM. It rejects UTF-16.
 
 ```sh
 tt import entries.json
