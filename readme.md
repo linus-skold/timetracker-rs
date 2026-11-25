@@ -106,6 +106,12 @@ The skill is also published for the tool-agnostic `skills` CLI:
 npx skills add linus-skold/timetracker-rs
 ```
 
+To get only `SKILL.md`, print it and redirect the output:
+
+```sh
+tt --skill > SKILL.md
+```
+
 Every route places the same files. `npx skills add` installs no hooks, so run
 `tt skill install` afterwards if you use Claude Code.
 

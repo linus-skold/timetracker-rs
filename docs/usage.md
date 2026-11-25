@@ -256,6 +256,16 @@ copilot   GitHub Copilot  ~/.agents/skills      not found
 gemini    Gemini CLI      ~/.agents/skills      installed
 ```
 
+### `tt skill show` / `tt --skill`
+
+Print the `SKILL.md` file that is built into the binary to stdout. The output
+has no banner and no update notice, so you can redirect it to a file.
+
+```
+tt --skill > SKILL.md                      # bash, zsh, fish
+tt --skill | save path/to/SKILL.md         # Nushell
+```
+
 ### `tt completions [shell]`
 
 Print the shell completion hook for `bash`, `zsh`, `fish`, `powershell`,

@@ -10,15 +10,28 @@ use crate::completions;
 use crate::tracker::IdleInterval;
 
 #[derive(Parser)]
-#[command(name = "tt", about = "Simple time tracking CLI", version)]
+#[command(
+    name = "tt",
+    about = "Simple time tracking CLI",
+    version,
+    args_conflicts_with_subcommands = true
+)]
 pub struct Cli {
     #[command(subcommand)]
     subcommand: Option<Commands>,
+    /// Print the tt-time-logging SKILL.md to stdout
+    #[arg(long)]
+    skill: bool,
 }
 
 impl Cli {
     /// The command to run. A bare `tt` opens the TUI.
     pub fn into_command(self) -> Commands {
+        if self.skill {
+            return Commands::Skill {
+                command: SkillCommands::Show,
+            };
+        }
         self.subcommand.unwrap_or(Commands::Tui)
     }
 }
@@ -177,6 +190,8 @@ pub enum SkillCommands {
     },
     /// List the agents this knows, and which of them are on this machine
     Targets,
+    /// Print the embedded SKILL.md to stdout. Same as `tt --skill`.
+    Show,
 }
 
 impl Commands {

@@ -48,6 +48,23 @@ const SKILL_FILES: &[(&str, &str)] = &[
     ),
 ];
 
+/// The embedded `SKILL.md`, byte for byte.
+pub fn skill_markdown() -> &'static str {
+    SKILL_FILES
+        .iter()
+        .find(|(relative, _)| *relative == "SKILL.md")
+        .map(|(_, contents)| *contents)
+        .expect("SKILL_FILES should hold SKILL.md")
+}
+
+/// Writes `SKILL.md` to stdout with nothing added, so it can be redirected.
+pub fn print_skill_markdown() -> Result<()> {
+    use std::io::Write;
+    std::io::stdout()
+        .write_all(skill_markdown().as_bytes())
+        .context("writing SKILL.md to stdout")
+}
+
 /// One agent `tt` knows how to install for.
 ///
 /// Adding an agent is adding a row. Nothing else in this module knows an
