@@ -218,6 +218,16 @@ step one period back or forward. The Entries box title names the view,
 the period and the sort order, and the first line in the box shows the five
 views with the current one marked.
 
+**Pausing.** In the Entries box, `space` pauses the running entry under the
+cursor: its clock stops where it is and the entry stays active, marked
+`(paused)` in the Status box. Pressing `space` on that same row again resumes
+it, and the paused stretch is never billed. With the cursor on another row —
+or focus in a side pane or the Summary — the key does nothing. `s` still stops
+the running entry for good; stopping while paused ends it at the moment it
+paused. The detail popover's **Timeline** shows the worked stretches as
+`HH:MM -> HH:MM`, splitting only at pauses of a minute or more — a pause of a
+few seconds leaves the timeline continuous.
+
 **Heatmaps.** `M` flips the open view between its entry list and a heatmap of
 the same period. Each heatmap is a grid with two axes. A cell becomes darker
 as more of its own span holds time. The year view opens as a heatmap; the
@@ -476,6 +486,7 @@ heatmap_level4 = "#216e39"
 
 [icons]
 active = "▶️"
+paused = "⏸️"
 stopped = "⏹️"
 logged = "📝"
 warning = "⚠️"

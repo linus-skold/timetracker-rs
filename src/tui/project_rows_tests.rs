@@ -38,6 +38,8 @@ fn at(
         start_time: start,
         end_time: Some(start + Duration::minutes(30)),
         idle: Vec::new(),
+        paused_at: None,
+        pauses: Vec::new(),
         data: None,
     }
 }
